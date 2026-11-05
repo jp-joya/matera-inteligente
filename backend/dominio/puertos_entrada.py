@@ -15,16 +15,20 @@ from dominio.especie import Especie
 from dominio.identidad import IdentidadDispositivo, IdentidadUsuario
 from dominio.parametros import Parametro
 from dominio.reportes import ReporteDeDispositivo
+from dominio.plantas import Planta
 from dominio.resultados import (
     CuentaUsuario,
+    DispositivoRegistrado,
+    EstadoDispositivo,
     HistorialPlanta,
     PlantaConEstado,
     ResultadoMedicion,
-    SensorVinculado,
+    ResultadoReclamo,
     SesionIniciada,
     SolicitudDiagnostico,
     TokenDispositivo,
 )
+from dominio.sensores import CodigoSensor
 from dominio.usuarios import ResumenUsuario, Rol, Usuario
 
 # Cuantos registros devuelve el historial si quien pregunta no dice cuantos.
@@ -88,8 +92,10 @@ class ConsultarCuenta(ABC):
 
 
 class RegistrarPlanta(ABC):
+    """La matera se crea sin sensor: se le vincula despues, con el QR de la etiqueta de la placa."""
+
     @abstractmethod
-    def ejecutar(self, usuario: Usuario, apodo: str, especie: str, codigo: str) -> SensorVinculado: ...
+    def ejecutar(self, usuario: Usuario, apodo: str, especie: str) -> Planta: ...
 
 
 class ListarPlantas(ABC):
@@ -104,9 +110,11 @@ class EliminarPlanta(ABC):
     def ejecutar(self, usuario: Usuario, planta_id: int) -> None: ...
 
 
-class ReemplazarSensor(ABC):
+class QuitarSensor(ABC):
+    """Suelta el sensor de una matera: su clave y su token dejan de servir, y se le avisa a la placa."""
+
     @abstractmethod
-    def ejecutar(self, usuario: Usuario, planta_id: int, codigo: str) -> SensorVinculado: ...
+    def ejecutar(self, usuario: Usuario, planta_id: int) -> CodigoSensor: ...
 
 
 class ConsultarHistorial(ABC):
@@ -115,6 +123,27 @@ class ConsultarHistorial(ABC):
 
 
 # --- Dispositivos ---
+
+
+class RegistrarDispositivo(ABC):
+    """El paso de fabrica: un ADMIN registra la MAC de una placa y recibe el codigo de reclamo del QR."""
+
+    @abstractmethod
+    def ejecutar(self, admin: Usuario, codigo: str) -> DispositivoRegistrado: ...
+
+
+class ReclamarDispositivo(ABC):
+    """El dueno escanea el QR de la etiqueta y vincula la placa a su matera. La placa recibe su clave por su canal."""
+
+    @abstractmethod
+    def ejecutar(self, usuario: Usuario, codigo: str, codigo_reclamo: str, planta_id: int) -> ResultadoReclamo: ...
+
+
+class AtenderDispositivo(ABC):
+    """La placa abrio su canal en vivo: se le dice si tiene dueno y, si no ha confirmado su clave, se le da una."""
+
+    @abstractmethod
+    def ejecutar(self, codigo: CodigoSensor) -> EstadoDispositivo: ...
 
 
 class CanjearClaveDispositivo(ABC):

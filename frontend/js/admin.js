@@ -111,7 +111,7 @@ export function crearPantallaAdmin(contexto) {
   async function eliminar(nodo, usuario) {
     // Eliminar no tiene vuelta atrás: se pide escribir el correo de la cuenta.
     const escrito = window.prompt(
-      `Se eliminará la cuenta de ${usuario.nombre} con sus plantas, sensores e historial. Escriba su correo para confirmar:`);
+      `Se eliminará la cuenta de ${usuario.nombre} con sus plantas y su historial; sus sensores quedarán libres. Escriba su correo para confirmar:`);
     if (escrito === null) return;
     if (escrito.trim().toLowerCase() !== usuario.correo) {
       mostrarError($("error-admin"), { codigo: "CONFIRMACION", message: "El correo no coincide. No se eliminó nada.", detalle: {} });

@@ -152,8 +152,8 @@ def test_el_token_de_una_cuenta_desactivada_deja_de_servir_aunque_no_haya_vencid
 
 def test_mi_cuenta_cuenta_solo_las_plantas_propias(cuentas):
     beto = cuentas.registrar.ejecutar("Beto", "beto@correo.co", "clave-segura")
-    cuentas.plantas.guardar_con_sensor(Planta(None, 1, "Sala", "potos"), codigo(1), "h")
-    cuentas.plantas.guardar_con_sensor(Planta(None, beto.id, "Patio", "lavanda"), codigo(2), "h")
-    cuentas.plantas.guardar_con_sensor(Planta(None, beto.id, "Cocina", "helecho"), codigo(3), "h")
+    cuentas.plantas.con_sensor(Planta(None, 1, "Sala", "potos"), codigo(1), "h")
+    cuentas.plantas.con_sensor(Planta(None, beto.id, "Patio", "lavanda"), codigo(2), "h")
+    cuentas.plantas.con_sensor(Planta(None, beto.id, "Cocina", "helecho"), codigo(3), "h")
 
     assert cuentas.consultar.ejecutar(cuentas.usuarios.por_id(1)).cantidad_plantas == 1

@@ -1,0 +1,55 @@
+%% Secuencia del corte 2 (implementada): la placa sale de fabrica sin ningun secreto, el dueno la reclama
+%% con el QR de su etiqueta, la API le entrega la clave por su canal en vivo y la placa la canjea por su token.
+%% Desde el canje en adelante, todo sigue como en secuencia-medicion-sensor.
+sequenceDiagram
+    autonumber
+    actor A as Admin (fábrica)<br/>fabricar_dispositivo.py
+    participant ESP as ESP32<br/>(o simulador)
+    actor D as Dueño<br/>(celular, front)
+    participant API as API<br/>(rutas_admin, canal_dispositivos,<br/>rutas_dispositivos)
+    participant UC as Casos de uso<br/>(aplicacion/sensores.py)
+    participant R as RegistroDispositivos y<br/>SensoresVinculados (puertos)
+    participant AV as AvisosDispositivos<br/>(puerto, WebSocket)
+
+    rect rgb(240, 244, 240)
+    Note over A,R: Fábrica, una vez por placa
+    A ->> API: POST /admin/dispositivos {codigo: MAC}<br/>Bearer JWT de admin
+    API ->> UC: RegistrarDispositivo.ejecutar(admin, MAC)
+    UC ->> R: registrar(Dispositivo(MAC, huella(código de reclamo)))
+    API -->> A: 201 {codigo, codigoReclamo}
+    Note over A: imprime el QR:<br/>front/#35;vincular?d=MAC#38;c=código
+    end
+
+    ESP ->> API: WS /dispositivos/canal?codigo=MAC (sin secreto)
+    API ->> UC: AtenderDispositivo.ejecutar(MAC)
+    UC ->> R: por_codigo(MAC)
+    API -->> ESP: {"tipo": "estado", "vinculado": false}
+    Note over ESP: espera dueño
+
+    D ->> API: escanea el QR · POST /dispositivos/MAC/reclamo<br/>{codigoReclamo, plantaId} · Bearer JWT de usuario
+    API ->> UC: ReclamarDispositivo.ejecutar(usuario, MAC, código, planta)
+    UC ->> R: por_codigo(MAC) y compara huella(código)
+    alt código incorrecto o placa desconocida
+        API -->> D: 403 CODIGO_RECLAMO_INVALIDO
+    else la placa ya es de otra matera
+        API -->> D: 409 SENSOR_YA_VINCULADO
+    else código correcto
+        UC ->> R: reemplazar(planta, Sensor(MAC, huella(clave nueva))) · sin confirmar
+        opt la planta tenía otra placa
+            UC ->> AV: desvinculado(placa anterior)
+        end
+        alt la placa está conectada
+            UC ->> AV: vinculado(MAC, planta, clave)
+            AV -->> ESP: {"tipo": "vinculado", "clave": "..."}
+            API -->> D: 201 {claveEntregada: true}
+        else la placa está apagada
+            API -->> D: 201 {claveEntregada: false}
+            Note over ESP,UC: al conectarse, AtenderDispositivo ve la clave sin confirmar,<br/>le pone una nueva (nueva_clave) y se la manda en el mismo mensaje "vinculado"
+        end
+        ESP ->> ESP: guarda la clave en la NVS
+        ESP ->> API: POST /dispositivos/MAC/token {clave}
+        API ->> UC: CanjearClaveDispositivo.ejecutar(MAC, clave)
+        UC ->> R: renovar(sensor, token_id) · confirma la clave
+        API -->> ESP: 200 {token, venceEn}
+        Note over ESP: desde aquí reporta lecturas con<br/>Authorization: Bearer JWT del sensor
+    end

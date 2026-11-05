@@ -16,6 +16,7 @@ from dominio.errores_usuarios import (
     ApodoRepetido,
     CorreoYaRegistrado,
     CredencialDispositivoInvalida,
+    DispositivoYaRegistrado,
     EspecieYaExiste,
     PlantaNoEncontrada,
     SensorYaVinculado,
@@ -26,6 +27,7 @@ from dominio.historial import RegistroMedicion
 from dominio.identidad import IdentidadDispositivo, IdentidadUsuario
 from dominio.plantas import Planta
 from dominio.puertos_usuarios import (
+    AvisosDispositivos,
     Cifrador,
     ConsultaCuentas,
     ConsultaPlantas,
@@ -36,6 +38,7 @@ from dominio.puertos_usuarios import (
     ListadoCuentas,
     NotificadorDiagnosticos,
     RegistroCuentas,
+    RegistroDispositivos,
     RegistroEspecies,
     RegistroPlantas,
     Reloj,
@@ -43,7 +46,7 @@ from dominio.puertos_usuarios import (
     SesionesAbiertas,
     VerificadorTokens,
 )
-from dominio.sensores import CodigoSensor, Sensor
+from dominio.sensores import CodigoSensor, Dispositivo, Sensor
 from dominio.usuarios import Correo, ResumenUsuario, Sesion, Usuario
 from tests.dobles import RepositorioEspeciesEnMemoria
 
@@ -81,15 +84,32 @@ class RepositorioSensoresEnMemoria(SensoresVinculados, CredencialesSensor):
         if en_uso is not None and en_uso.planta_id != sensor.planta_id:
             raise SensorYaVinculado(sensor.codigo.valor)
         self.quitar_de_planta(sensor.planta_id)
-        self._sensores[sensor.codigo.valor] = sensor  # el sensor nuevo nace sin token vigente
+        self._sensores[sensor.codigo.valor] = sensor  # el sensor nuevo nace sin token vigente ni clave confirmada
+
+    def quitar(self, planta: Planta) -> None:
+        guardada = self.planta_con_id(planta.id)
+        if guardada is not None and guardada.usuario_id == planta.usuario_id:
+            self.quitar_de_planta(planta.id)
+
+    def nueva_clave(self, sensor: Sensor, hash_clave: str) -> bool:
+        if not self._es_el_guardado(sensor):
+            return False
+        self._sensores[sensor.codigo.valor] = replace(sensor, hash_clave=hash_clave, clave_confirmada=False)
+        self._tokens.pop(sensor.codigo.valor, None)
+        return True
 
     def renovar(self, sensor: Sensor, token_id: str) -> bool:
-        # Solo si el sensor guardado sigue siendo ese mismo (codigo, planta y huella). Lee lo guardado
-        # y no por_codigo(), que una prueba puede reemplazar para simular una lectura vieja.
-        if self._sensores.get(sensor.codigo.valor) != sensor:
+        if not self._es_el_guardado(sensor):
             return False
+        self._sensores[sensor.codigo.valor] = replace(sensor, clave_confirmada=True)  # el canje confirma la clave
         self._tokens[sensor.codigo.valor] = token_id
         return True
+
+    def _es_el_guardado(self, sensor: Sensor) -> bool:
+        # Solo si el sensor guardado sigue siendo ese mismo (codigo, planta y huella). Lee lo guardado
+        # y no por_codigo(), que una prueba puede reemplazar para simular una lectura vieja.
+        guardado = self._sensores.get(sensor.codigo.valor)
+        return guardado is not None and (guardado.planta_id, guardado.hash_clave) == (sensor.planta_id, sensor.hash_clave)
 
     def planta_con_token(self, codigo: CodigoSensor, token_id: str) -> Planta | None:
         sensor = self._sensores.get(codigo.valor)
@@ -113,15 +133,17 @@ class RepositorioPlantasEnMemoria(ConsultaPlantas, RegistroPlantas):
         self._sensores = sensores or RepositorioSensoresEnMemoria()
         self._sensores.planta_con_id = self._plantas.get
 
-    def guardar_con_sensor(self, planta: Planta, codigo: CodigoSensor, hash_clave: str) -> Planta:
-        # Revisa todo antes de guardar nada, como la transaccion de la base.
+    def guardar(self, planta: Planta) -> Planta:
         if any(p.es_de(planta.usuario_id) and p.mismo_apodo(planta.apodo) for p in self._plantas.values()):
             raise ApodoRepetido(planta.apodo)
-        if self._sensores.por_codigo(codigo) is not None:
-            raise SensorYaVinculado(codigo.valor)
         guardada = replace(planta, id=self._siguiente_id)
         self._plantas[guardada.id] = guardada
         self._siguiente_id += 1
+        return guardada
+
+    def con_sensor(self, planta: Planta, codigo: CodigoSensor, hash_clave: str) -> Planta:
+        """No es del puerto: atajo de las pruebas para una matera que ya tiene su sensor vinculado."""
+        guardada = self.guardar(planta)
         self._sensores.reemplazar(guardada, Sensor(codigo, guardada.id, hash_clave))
         return guardada
 
@@ -139,8 +161,44 @@ class RepositorioPlantasEnMemoria(ConsultaPlantas, RegistroPlantas):
 
 
 def codigo(numero: int) -> CodigoSensor:
-    """Un codigo de sensor distinto para cada planta de una prueba: MT-0001-AA, MT-0002-AA..."""
-    return CodigoSensor(f"MT-{numero:04d}-AA")
+    """Un codigo de sensor (la MAC de la placa) distinto para cada planta de una prueba: A4CF12000001, A4CF12000002..."""
+    return CodigoSensor(f"A4CF12{numero:06d}")
+
+
+class RepositorioDispositivosEnMemoria(RegistroDispositivos):
+    """Las placas registradas en fabrica."""
+
+    def __init__(self):
+        self.guardados: dict[str, Dispositivo] = {}
+
+    def registrar(self, dispositivo: Dispositivo) -> None:
+        if dispositivo.codigo.valor in self.guardados:
+            raise DispositivoYaRegistrado(dispositivo.codigo.valor)
+        self.guardados[dispositivo.codigo.valor] = dispositivo
+
+    def por_codigo(self, codigo: CodigoSensor) -> Dispositivo | None:
+        return self.guardados.get(codigo.valor)
+
+
+class AvisosEnMemoria(AvisosDispositivos):
+    """Anota lo que se le mandaria a cada placa. `conectadas` son las placas con su canal abierto."""
+
+    def __init__(self):
+        self.conectadas: set[str] = set()
+        self.claves: list[tuple[str, int, str]] = []
+        self.desvinculadas: list[str] = []
+
+    def conectado(self, codigo: CodigoSensor) -> bool:
+        return codigo.valor in self.conectadas
+
+    def vinculado(self, codigo: CodigoSensor, planta: Planta, clave: str) -> bool:
+        if codigo.valor not in self.conectadas:
+            return False
+        self.claves.append((codigo.valor, planta.id, clave))
+        return True
+
+    def desvinculado(self, codigo: CodigoSensor) -> None:
+        self.desvinculadas.append(codigo.valor)
 
 
 class RepositorioUsuariosEnMemoria(ConsultaCuentas, RegistroCuentas, ListadoCuentas):
@@ -260,7 +318,7 @@ class GeneradorSecretosFalso(GeneradorSecretos):
 
 
 class TokensFalsos(EmisorTokens, VerificadorTokens):
-    """Tokens legibles a proposito, sin firma: token(usuario 1, secreto-1) o token(dispositivo MT-0001-AA, secreto-2).
+    """Tokens legibles a proposito, sin firma: token(usuario 1, secreto-1) o token(dispositivo A4CF12000001, secreto-2).
 
     Sirven para probar los casos de uso, que nunca ven un JWT. La firma y el
     vencimiento de los tokens de verdad los prueban las pruebas de

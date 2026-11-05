@@ -9,7 +9,7 @@ from dominio.sensores import CodigoSensor
 from tests.dobles import medicion
 
 AHORA = datetime(2026, 10, 22, 15, 0, tzinfo=timezone.utc)
-SENSOR = CodigoSensor("MT-0001-AA")
+SENSOR = CodigoSensor("A4CF12000001")
 
 
 @pytest.mark.parametrize(

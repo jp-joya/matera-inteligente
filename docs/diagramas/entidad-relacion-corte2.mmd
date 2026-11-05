@@ -6,7 +6,8 @@ erDiagram
     USUARIO ||--o{ PLANTA : "es dueño de"
     ESPECIE ||--o{ PLANTA : "es la especie de"
     ESPECIE ||--|{ RANGO_OPTIMO : "uno por parámetro"
-    PLANTA ||--o| SENSOR : "nace con"
+    PLANTA ||--o| SENSOR : "tiene, si reclamaron una placa"
+    DISPOSITIVO ||--o| SENSOR : "vinculada como"
     PLANTA ||--o{ MEDICION : "acumula"
     MEDICION ||--|{ LECTURA : "una por parámetro"
     PARAMETRO ||..o{ RANGO_OPTIMO : "se mide con"
@@ -44,11 +45,17 @@ erDiagram
         string creada_en
     }
     SENSOR {
-        string codigo PK "MT-0000-XX"
+        string codigo PK, FK "la MAC de la placa"
         int planta_id FK "único"
-        string hash_clave "SHA-256 de la clave"
+        string hash_clave "SHA-256 de la clave que recibió por su canal"
         string vinculado_en
         string token_id "id (jti) del JWT vigente, NULL hasta el primer canje"
+        int clave_confirmada "1 desde el primer canje"
+    }
+    DISPOSITIVO {
+        string codigo PK "la MAC: 12 cifras hexadecimales"
+        string hash_reclamo "SHA-256 del código del QR"
+        string registrado_en
     }
     MEDICION {
         int id PK

@@ -1,7 +1,7 @@
 """Repositorios de cuentas, plantas, sensores e historial sobre un archivo SQLite temporal.
 
 Aqui se prueba lo que los dobles en memoria no imitan: las restricciones de la
-base, las cascadas y que la planta y su sensor se guarden en una sola transaccion.
+base, las cascadas y que cambiar el sensor de una planta sea una sola transaccion.
 """
 import sqlite3
 from dataclasses import replace
@@ -10,16 +10,24 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from dominio.errores import EspecieNoSoportada
-from dominio.errores_usuarios import ApodoRepetido, CorreoYaRegistrado, PlantaNoEncontrada, SensorYaVinculado, SesionInvalida
+from dominio.errores_usuarios import (
+    ApodoRepetido,
+    CorreoYaRegistrado,
+    DispositivoYaRegistrado,
+    PlantaNoEncontrada,
+    SensorYaVinculado,
+    SesionInvalida,
+)
 from dominio.estados import EstadoGlobal, EstadoParametro
 from dominio.historial import LecturaRegistrada, RegistroMedicion
 from dominio.parametros import HUMEDAD, LUZ, TEMPERATURA
 from dominio.plantas import Planta
-from dominio.sensores import CodigoSensor, Sensor
+from dominio.sensores import CodigoSensor, Dispositivo, Sensor
 from dominio.usuarios import Correo, Rol, Sesion, Usuario
 from infraestructura.sqlite import (
     BaseDatos,
     HistorialMedicionesSqlite,
+    RepositorioDispositivosSqlite,
     RepositorioPlantasSqlite,
     RepositorioSensoresSqlite,
     RepositorioSesionesSqlite,
@@ -27,8 +35,8 @@ from infraestructura.sqlite import (
 )
 
 AHORA = datetime(2026, 10, 12, 15, 0, tzinfo=timezone.utc)
-CODIGO = CodigoSensor("MT-0001-AA")
-OTRO_CODIGO = CodigoSensor("MT-0002-BB")
+CODIGO = CodigoSensor("A4CF12000001")
+OTRO_CODIGO = CodigoSensor("A4CF12000002")
 
 
 class Repositorios:
@@ -38,17 +46,26 @@ class Repositorios:
         self.sesiones = RepositorioSesionesSqlite(self.bd)
         self.plantas = RepositorioPlantasSqlite(self.bd)
         self.sensores = RepositorioSensoresSqlite(self.bd)
+        self.dispositivos = RepositorioDispositivosSqlite(self.bd)
         self.historial = HistorialMedicionesSqlite(self.bd)
         self._codigos = 0
 
     def registrar(self, correo="ana@correo.co", nombre="Ana"):
         return self.usuarios.guardar(Usuario(None, Correo(correo), nombre, "pbkdf2_sha256$1$00$00"))
 
+    def placa(self, codigo):
+        """La registra en fabrica, si no lo estaba: un sensor solo puede ser una placa registrada."""
+        if self.dispositivos.por_codigo(codigo) is None:
+            self.dispositivos.registrar(Dispositivo(codigo, "huella-reclamo"))
+
     def planta(self, usuario_id, apodo="Sala", especie="potos", codigo=None):
-        """Una matera con su sensor; si no se pide un codigo, uno distinto cada vez (MT-0901-ZZ...)."""
+        """Una matera con su placa vinculada; si no se pide un codigo, uno distinto cada vez (A4CF12000901...)."""
         self._codigos += 1
-        codigo = codigo or CodigoSensor(f"MT-{900 + self._codigos:04d}-ZZ")
-        return self.plantas.guardar_con_sensor(Planta(None, usuario_id, apodo, especie), codigo, "huella-clave")
+        codigo = codigo or CodigoSensor(f"A4CF12{900 + self._codigos:06d}")
+        planta = self.plantas.guardar(Planta(None, usuario_id, apodo, especie))
+        self.placa(codigo)
+        self.sensores.reemplazar(planta, Sensor(codigo, planta.id, "huella-clave"))
+        return planta
 
     def registro(self, planta_id, momento=AHORA, humedad=18.0):
         lecturas = (
@@ -155,7 +172,7 @@ def test_un_id_que_no_cabe_en_sqlite_no_existe(repos):
     assert repos.usuarios.por_id(-(2**63) - 1) is None
 
 
-def test_la_planta_y_su_sensor_se_guardan_juntos(repos):
+def test_una_placa_vinculada_queda_como_el_sensor_de_la_planta_sin_clave_confirmada(repos):
     planta = repos.planta(repos.registrar().id, codigo=CODIGO)
 
     assert repos.sensores.por_codigo(CODIGO) == Sensor(CODIGO, planta.id, "huella-clave")
@@ -163,23 +180,70 @@ def test_la_planta_y_su_sensor_se_guardan_juntos(repos):
 
 
 @pytest.mark.parametrize(
-    ("apodo", "especie", "codigo", "error"),
-    [
-        ("SALA", "lavanda", OTRO_CODIGO, ApodoRepetido),
-        ("Patio", "cactus", OTRO_CODIGO, EspecieNoSoportada),
-        ("Patio", "lavanda", CODIGO, SensorYaVinculado),
-    ],
-    ids=["apodo repetido sin importar mayusculas", "especie que no existe", "codigo en uso"],
+    ("apodo", "especie", "error"),
+    [("SALA", "lavanda", ApodoRepetido), ("Patio", "cactus", EspecieNoSoportada)],
+    ids=["apodo repetido sin importar mayusculas", "especie que no existe"],
 )
-def test_si_la_base_rechaza_la_planta_o_el_sensor_no_queda_ninguno_de_los_dos(repos, apodo, especie, codigo, error):
+def test_la_base_rechaza_una_planta_invalida(repos, apodo, especie, error):
     ana = repos.registrar()
     repos.planta(ana.id, "Sala", "potos", CODIGO)
 
     with pytest.raises(error):
-        repos.plantas.guardar_con_sensor(Planta(None, ana.id, apodo, especie), codigo, "h")
+        repos.plantas.guardar(Planta(None, ana.id, apodo, especie))
 
-    assert (repos.contar("planta"), repos.contar("sensor")) == (1, 1)
-    assert repos.sensores.por_codigo(OTRO_CODIGO) is None
+    assert repos.contar("planta") == 1
+
+
+def test_una_placa_se_registra_una_sola_vez_y_existe_aunque_no_tenga_dueno(repos):
+    repos.dispositivos.registrar(Dispositivo(CODIGO, "huella-reclamo"))
+
+    assert repos.dispositivos.por_codigo(CODIGO) == Dispositivo(CODIGO, "huella-reclamo")
+    assert repos.dispositivos.por_codigo(OTRO_CODIGO) is None
+    assert repos.sensores.por_codigo(CODIGO) is None
+    with pytest.raises(DispositivoYaRegistrado):
+        repos.dispositivos.registrar(Dispositivo(CODIGO, "otra-huella"))
+
+
+def test_la_base_no_acepta_como_sensor_una_placa_que_no_paso_por_fabrica(repos):
+    planta = repos.plantas.guardar(Planta(None, repos.registrar().id, "Sala", "potos"))
+
+    with pytest.raises(sqlite3.IntegrityError):
+        repos.sensores.reemplazar(planta, Sensor(CODIGO, planta.id, "h"))
+    assert repos.contar("sensor") == 0
+
+
+def test_una_clave_nueva_reemplaza_la_anterior_sin_confirmar_y_deja_sin_efecto_el_token(repos):
+    sala = repos.planta(repos.registrar().id, codigo=CODIGO)
+    leido = repos.sensores.por_codigo(CODIGO)
+    repos.sensores.renovar(leido, "jti-1")
+
+    assert repos.sensores.nueva_clave(repos.sensores.por_codigo(CODIGO), "huella-nueva") is True
+
+    assert repos.sensores.por_codigo(CODIGO) == Sensor(CODIGO, sala.id, "huella-nueva", clave_confirmada=False)
+    assert repos.sensores.planta_con_token(CODIGO, "jti-1") is None
+    assert repos.sensores.nueva_clave(leido, "otra-huella") is False  # leido tiene la huella vieja
+
+
+def test_el_canje_confirma_la_clave(repos):
+    sala = repos.planta(repos.registrar().id, codigo=CODIGO)
+
+    repos.sensores.renovar(repos.sensores.por_codigo(CODIGO), "jti-1")
+
+    assert repos.sensores.por_codigo(CODIGO) == Sensor(CODIGO, sala.id, "huella-clave", clave_confirmada=True)
+
+
+def test_quitar_el_sensor_suelta_la_placa_y_conserva_el_historial(repos):
+    ana, beto = repos.registrar(), repos.registrar("beto@correo.co", "Beto")
+    sala = repos.planta(ana.id, codigo=CODIGO)
+    repos.historial.agregar(sala, repos.registro(sala.id))
+
+    repos.sensores.quitar(replace(sala, usuario_id=beto.id))  # otro dueno: no toca nada
+    assert repos.sensores.de_planta(sala.id) is not None
+    repos.sensores.quitar(sala)
+
+    assert repos.sensores.de_planta(sala.id) is None
+    assert repos.dispositivos.por_codigo(CODIGO) is not None
+    assert repos.contar("medicion") == 1
 
 
 def test_no_se_puede_borrar_una_especie_que_una_planta_usa(repos):
@@ -192,6 +256,7 @@ def test_no_se_puede_borrar_una_especie_que_una_planta_usa(repos):
 def test_reemplazar_el_sensor_deja_uno_solo_libera_el_codigo_y_conserva_el_historial(repos):
     planta = repos.planta(repos.registrar().id, codigo=CODIGO)
     repos.historial.agregar(planta, repos.registro(planta.id))
+    repos.placa(OTRO_CODIGO)
 
     repos.sensores.reemplazar(planta, Sensor(OTRO_CODIGO, planta.id, "huella-nueva"))
 
@@ -220,15 +285,13 @@ def test_reemplazar_por_un_codigo_de_otra_planta_no_le_quita_el_sensor_a_ninguna
     assert repos.sensores.de_planta(patio.id).codigo == OTRO_CODIGO
 
 
-def test_una_planta_vieja_sin_sensor_recibe_uno(repos):
-    # Antes de que el sensor fuera obligatorio, una planta se podia crear sin el.
+def test_una_planta_sin_sensor_recibe_uno(repos):
     ana = repos.registrar()
-    with repos.bd.conexion() as conexion:
-        planta_id = conexion.execute(
-            "INSERT INTO planta (usuario_id, especie, apodo) VALUES (?, 'potos', 'Sala')", (ana.id,)
-        ).lastrowid
+    planta = repos.plantas.guardar(Planta(None, ana.id, "Sala", "potos"))
+    planta_id = planta.id
+    repos.placa(CODIGO)
 
-    repos.sensores.reemplazar(Planta(planta_id, ana.id, "Sala", "potos"), Sensor(CODIGO, planta_id, "h"))
+    repos.sensores.reemplazar(planta, Sensor(CODIGO, planta_id, "h"))
 
     assert repos.sensores.de_planta(planta_id) == Sensor(CODIGO, planta_id, "h")
 
@@ -260,6 +323,7 @@ def test_renovar_no_da_token_si_el_sensor_cambio_despues_de_leerlo(repos):
     leido = repos.sensores.por_codigo(CODIGO)  # el sensor con el que se verifico la clave
 
     # Mientras tanto Ana cambia de sensor y Beto crea una matera con el codigo que quedo libre.
+    repos.placa(OTRO_CODIGO)
     repos.sensores.reemplazar(sala, Sensor(OTRO_CODIGO, sala.id, "huella-nueva"))
     repos.planta(beto.id, "Patio", codigo=CODIGO)
 
@@ -284,7 +348,7 @@ def test_no_se_reemplaza_el_sensor_si_la_planta_ya_no_es_la_que_se_leyo_ni_si_ya
 def test_una_planta_de_una_cuenta_que_ya_no_existe_no_se_guarda_y_no_culpa_a_la_especie(repos):
     # La cuenta se borro entre la autenticacion y el INSERT: la especie si existe.
     with pytest.raises(SesionInvalida):
-        repos.plantas.guardar_con_sensor(Planta(None, 999, "Sala", "potos"), CODIGO, "h")
+        repos.plantas.guardar(Planta(None, 999, "Sala", "potos"))
 
     assert (repos.contar("planta"), repos.contar("sensor")) == (0, 0)
 
@@ -313,7 +377,7 @@ def test_el_historial_guarda_en_utc_y_ordena_bien_horas_de_otra_zona_horaria(rep
     assert [r.momento.isoformat() for r in registros] == ["2026-10-22T15:30:00+00:00", "2026-10-22T15:00:00+00:00"]
 
 
-def test_borrar_una_planta_borra_su_sensor_y_su_historial(repos):
+def test_borrar_una_planta_borra_su_historial_y_suelta_su_placa(repos):
     ana = repos.registrar()
     planta = repos.planta(ana.id, codigo=CODIGO)
     repos.historial.agregar(planta, repos.registro(planta.id))
@@ -321,4 +385,5 @@ def test_borrar_una_planta_borra_su_sensor_y_su_historial(repos):
     repos.plantas.eliminar(planta)
 
     assert [repos.contar(t) for t in ("planta", "sensor", "medicion", "lectura")] == [0, 0, 0, 0]
+    assert repos.dispositivos.por_codigo(CODIGO) is not None  # la placa queda libre para otra matera
     assert repos.historial.ultimo_de(planta.id) is None

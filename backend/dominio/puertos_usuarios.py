@@ -14,7 +14,7 @@ from dominio.especie import Especie
 from dominio.historial import RegistroMedicion
 from dominio.identidad import IdentidadDispositivo, IdentidadUsuario
 from dominio.plantas import Planta
-from dominio.sensores import CodigoSensor, Sensor
+from dominio.sensores import CodigoSensor, Dispositivo, Sensor
 from dominio.usuarios import Correo, ResumenUsuario, Sesion, Usuario
 
 
@@ -97,17 +97,15 @@ class ConsultaPlantas(ABC):
 
 class RegistroPlantas(ABC):
     @abstractmethod
-    def guardar_con_sensor(self, planta: Planta, codigo: CodigoSensor, hash_clave: str) -> Planta:
-        """Crea la planta junto con su sensor y la devuelve con su id.
+    def guardar(self, planta: Planta) -> Planta:
+        """Crea la planta, sin sensor, y la devuelve con su id. Lanza ApodoRepetido si el dueno ya usa ese apodo.
 
-        Una matera no existe sin sensor: es una sola operacion, y si una de las dos
-        partes falla no se guarda ninguna. Lanza ApodoRepetido si el dueno ya usa ese
-        apodo y SensorYaVinculado si el codigo es de otra planta.
+        El sensor se le vincula despues, cuando el dueno reclama la placa con el QR de su etiqueta.
         """
 
     @abstractmethod
     def eliminar(self, planta: Planta) -> None:
-        """Borra la planta con su sensor y su historial.
+        """Borra la planta con su historial y suelta su sensor: la placa queda libre para otra matera.
 
         Recibe la planta que ya se leyo: si mientras tanto otra pestana la borro y su
         id paso a una planta nueva, esa otra no se toca.
@@ -129,8 +127,31 @@ class SensoresVinculados(ABC):
         mientras tanto se borro, lanza PlantaNoEncontrada. Si algo falla, la planta
         conserva el sensor que tenia. El historial no se toca. Lanza
         SensorYaVinculado si el codigo es de otra planta. El sensor nuevo empieza
-        sin token vigente: los tokens del anterior dejan de servir.
+        sin token vigente y sin clave confirmada: los tokens del anterior dejan de servir.
         """
+
+    @abstractmethod
+    def quitar(self, planta: Planta) -> None:
+        """Suelta el sensor de la planta, si sigue siendo la que se leyo: su clave y su token dejan de servir."""
+
+    @abstractmethod
+    def nueva_clave(self, sensor: Sensor, hash_clave: str) -> bool:
+        """Cambia la clave del sensor por otra, todavia sin confirmar, y deja sin efecto su token.
+
+        Solo si el sensor sigue siendo el que se leyo (la misma planta y la misma
+        clave); si no, devuelve False y no toca nada.
+        """
+
+
+class RegistroDispositivos(ABC):
+    """Las placas registradas en fabrica, con la huella del codigo de reclamo de su etiqueta."""
+
+    @abstractmethod
+    def registrar(self, dispositivo: Dispositivo) -> None:
+        """Lanza DispositivoYaRegistrado si ya hay una placa con ese codigo."""
+
+    @abstractmethod
+    def por_codigo(self, codigo: CodigoSensor) -> Dispositivo | None: ...
 
 
 class CredencialesSensor(ABC):
@@ -139,6 +160,8 @@ class CredencialesSensor(ABC):
     @abstractmethod
     def renovar(self, sensor: Sensor, token_id: str) -> bool:
         """Deja token_id como el unico vigente del sensor, que ya se autentico con su clave.
+
+        Tambien marca la clave como confirmada: si la placa la canjeo, la guardo.
 
         False si el sensor cambio desde que se leyo (otra clave u otra planta): asi
         una clave recien revocada no consigue un token para la planta que tomo su codigo.
@@ -176,6 +199,24 @@ class NotificadorDiagnosticos(ABC):
     @abstractmethod
     def publicar(self, usuario_id: int, planta: Planta, registro: RegistroMedicion, diagnostico: Diagnostico) -> None:
         """Se llama despues de guardar la medicion. Si el dueno no tiene la pantalla abierta, no hace nada."""
+
+
+class AvisosDispositivos(ABC):
+    """El canal en vivo de cada placa: por ahi recibe su clave y se entera si la quitan de su matera.
+
+    Hoy lo implementa un WebSocket (infraestructura.tiempo_real).
+    """
+
+    @abstractmethod
+    def conectado(self, codigo: CodigoSensor) -> bool: ...
+
+    @abstractmethod
+    def vinculado(self, codigo: CodigoSensor, planta: Planta, clave: str) -> bool:
+        """Le entrega su clave a la placa. False si no esta conectada o no se le pudo mandar."""
+
+    @abstractmethod
+    def desvinculado(self, codigo: CodigoSensor) -> None:
+        """Le avisa que ya no tiene planta. Si no esta conectada, no hace nada."""
 
 
 # --- Tokens: los implementa la libreria JWT, en infraestructura ---
@@ -221,7 +262,7 @@ class Cifrador(ABC):
 
 
 class GeneradorSecretos(ABC):
-    """Ids de token y claves de sensor, aleatorios. La clave del sensor se guarda solo como huella."""
+    """Ids de token, claves de sensor y codigos de reclamo, aleatorios. Claves y codigos se guardan solo como huella."""
 
     @abstractmethod
     def nuevo(self) -> str: ...

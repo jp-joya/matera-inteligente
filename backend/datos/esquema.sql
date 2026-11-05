@@ -48,12 +48,22 @@ CREATE TABLE IF NOT EXISTS planta (
     UNIQUE (usuario_id, apodo)
 );
 
+-- Las placas registradas en fabrica. Existen tengan o no dueno: el codigo es su MAC, y el
+-- codigo de reclamo va impreso en el QR de su etiqueta. En la placa no se graba ningun secreto.
+CREATE TABLE IF NOT EXISTS dispositivo (
+    codigo        TEXT PRIMARY KEY,             -- la MAC: 12 cifras hexadecimales
+    hash_reclamo  TEXT NOT NULL,                -- SHA-256 del codigo de reclamo: el codigo no se guarda
+    registrado_en TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- El vinculo de una placa con una planta: existe solo mientras la placa tenga dueno.
 CREATE TABLE IF NOT EXISTS sensor (
-    codigo       TEXT PRIMARY KEY,              -- MT-0000-XX
-    planta_id    INTEGER NOT NULL UNIQUE REFERENCES planta (id) ON DELETE CASCADE,
-    hash_clave   TEXT NOT NULL,                 -- SHA-256 de la clave: la clave no se guarda
-    vinculado_en TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    token_id     TEXT                           -- el id (jti) del JWT vigente; NULL hasta el primer canje
+    codigo           TEXT PRIMARY KEY REFERENCES dispositivo (codigo),  -- la MAC de la placa
+    planta_id        INTEGER NOT NULL UNIQUE REFERENCES planta (id) ON DELETE CASCADE,
+    hash_clave       TEXT NOT NULL,             -- SHA-256 de la clave: la clave no se guarda
+    vinculado_en     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    token_id         TEXT,                      -- el id (jti) del JWT vigente; NULL hasta el primer canje
+    clave_confirmada INTEGER NOT NULL DEFAULT 0 CHECK (clave_confirmada IN (0, 1))  -- 1 desde el primer canje
 );
 
 CREATE TABLE IF NOT EXISTS medicion (
@@ -61,7 +71,7 @@ CREATE TABLE IF NOT EXISTS medicion (
     planta_id INTEGER NOT NULL REFERENCES planta (id) ON DELETE CASCADE,
     momento   TEXT NOT NULL,                    -- ISO 8601 en UTC
     estado    TEXT NOT NULL,                    -- el estado global calculado en ese momento
-    origen    TEXT NOT NULL                     -- el codigo del sensor (MANUAL en las mediciones a mano de antes)
+    origen    TEXT NOT NULL                     -- la MAC del sensor (antes, MANUAL o el codigo MT-0000-XX)
 );
 
 CREATE INDEX IF NOT EXISTS medicion_por_planta ON medicion (planta_id, momento);

@@ -106,7 +106,7 @@
   <main id="pantalla-acceso" class="pantalla acceso" hidden>
     <p class="ceja">Mis materas, sus sensores y su historial</p>
     <h1 class="titulo titulo--grande">Ingrese a su cuenta</h1>
-    <p class="bajada bajada--angosta">Para diagnosticar, ver el catálogo de especies, crear sus materas con su sensor y ver sus mediciones en vivo necesita una cuenta.</p>
+    <p class="bajada bajada--angosta">Para diagnosticar, ver el catálogo de especies, crear sus materas, vincularles su sensor y ver sus mediciones en vivo necesita una cuenta.</p>
     <div class="acceso__formularios">
       <form id="form-ingresar" class="tarjeta formulario" novalidate>
         <h2 class="formulario__titulo">Ingresar</h2>
@@ -150,6 +150,7 @@
         <p id="materas-bajada" class="bajada bajada--sin-margen">Cargando sus plantas…</p>
         <p id="materas-consulta" class="consulta"></p>
       </div>
+      <button id="ir-a-vincular" type="button" class="boton-contorno">Vincular un sensor</button>
     </div>
     <form id="form-planta" class="tarjeta formulario formulario--linea" novalidate>
       <div class="formulario__fila">
@@ -161,22 +162,11 @@
           <label class="formulario__etiqueta" for="planta-especie">Especie</label>
           <select id="planta-especie" name="especie" class="selector"></select>
         </div>
-        <div class="formulario__grupo">
-          <label class="formulario__etiqueta" for="planta-codigo">Código del sensor</label>
-          <input id="planta-codigo" name="codigo" class="formulario__campo formulario__campo--codigo" autocomplete="off" placeholder="MT-0000-XX">
-        </div>
         <button type="submit" class="boton-primario">Agregar matera</button>
       </div>
-      <p class="formulario__ayuda">Cada matera nace con su sensor: escriba el código del dispositivo, el mismo que va en <code>config.h</code> del ESP32.</p>
+      <p class="formulario__ayuda">El sensor se vincula después: escanee con el celular el QR de su etiqueta, o use «Vincular sensor» en la matera.</p>
       <div id="error-planta" class="tarjeta-error" role="alert" hidden></div>
     </form>
-    <div id="clave-nueva" class="clave clave--matera" role="status" hidden>
-      <p id="clave-rotulo" class="rotulo"></p>
-      <code id="clave-texto" class="clave__texto"></code>
-      <button id="copiar-clave" type="button" class="boton-contorno">Copiar</button>
-      <button id="cerrar-clave" type="button" class="boton-contorno">Ya la guardé</button>
-      <p class="clave__ayuda">Cópiela en <code>CLAVE_SENSOR</code> de <code>config.h</code> y vuelva a subir el firmware: al arrancar, la placa la cambia por su token de acceso. El simulador la recibe con <code>--clave=</code>. La API solo guarda su huella: si la pierde, use «Cambiar sensor» con el mismo código y recibirá otra; la anterior y su token dejan de servir.</p>
-    </div>
     <div id="error-materas" class="tarjeta-error" role="alert" hidden></div>
     <div id="materas" class="materas"></div>
   </main>
@@ -237,6 +227,37 @@
       <div id="error-especie" class="tarjeta-error" role="alert" hidden></div>
       <p id="exito-especie" class="mensaje-exito" role="status" hidden></p>
       <button type="submit" class="boton-primario">Agregar especie</button>
+    </form>
+  </main>
+
+  <main id="pantalla-vincular" class="pantalla vincular" hidden>
+    <p class="ceja">Sensor de la matera</p>
+    <h1 class="titulo">Vincular un sensor</h1>
+    <p class="bajada bajada--angosta">El QR de la etiqueta trae el código del sensor y su código de reclamo. Elija la matera: el sensor recibe su clave solo, por su conexión con la API, apenas esté encendido y conectado al WiFi.</p>
+    <form id="form-vincular" class="tarjeta formulario vincular__tarjeta" novalidate>
+      <label class="formulario__etiqueta" for="vincular-dispositivo">Código del sensor</label>
+      <input id="vincular-dispositivo" name="dispositivo" class="formulario__campo formulario__campo--codigo" autocomplete="off" placeholder="A4CF12345678">
+      <label class="formulario__etiqueta" for="vincular-codigo">Código de reclamo</label>
+      <input id="vincular-codigo" name="codigo" class="formulario__campo formulario__campo--codigo" autocomplete="off" spellcheck="false">
+      <p class="formulario__ayuda">Vienen en el QR. Sin el QR, cópielos de la etiqueta.</p>
+      <label class="formulario__etiqueta" for="vincular-planta">Matera</label>
+      <select id="vincular-planta" name="planta" class="selector"></select>
+      <div id="vincular-nueva" class="formulario__fila" hidden>
+        <div class="formulario__grupo">
+          <label class="formulario__etiqueta" for="vincular-apodo">Apodo de la matera nueva</label>
+          <input id="vincular-apodo" name="apodo" class="formulario__campo" autocomplete="off" placeholder="Por ejemplo, Sala">
+        </div>
+        <div class="formulario__grupo">
+          <label class="formulario__etiqueta" for="vincular-especie">Especie</label>
+          <select id="vincular-especie" name="especie" class="selector"></select>
+        </div>
+      </div>
+      <div id="error-vincular" class="tarjeta-error" role="alert" hidden></div>
+      <p id="exito-vincular" class="mensaje-exito" role="status" hidden></p>
+      <div class="acciones vincular__acciones">
+        <button type="submit" class="boton-primario">Vincular sensor</button>
+        <button id="vincular-ver-materas" type="button" class="boton-contorno">Ver mis materas</button>
+      </div>
     </form>
   </main>
 </body>

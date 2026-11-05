@@ -1,6 +1,9 @@
 // Configuración del sensor de la matera.
 // Copie este archivo como config.h, en la misma carpeta, y complete sus datos.
-// config.h no se sube al repositorio (está en .gitignore): lleva la clave del WiFi y la del sensor.
+// config.h no se sube al repositorio (está en .gitignore): lleva la clave del WiFi.
+//
+// Aquí no va ninguna clave del sensor. La placa se identifica con su MAC, que viene de fábrica en el
+// chip, y recibe su clave de la API cuando su dueño la reclama con el QR de la etiqueta.
 #pragma once
 
 // Red WiFi de 2,4 GHz: la ESP32 no ve las redes de 5 GHz. Para la demo, el hotspot del celular
@@ -13,12 +16,6 @@
 // La IP del PC que corre el backend con MATERA_HOST=0.0.0.0 (en Windows: ipconfig, «Dirección IPv4»).
 // El hotspot puede darle otra IP al PC cada vez que se conecta: revísela antes de cada demo.
 #define API_BASE "http://192.168.43.10:5000/api/v1"
-
-// El código con el que se creó la matera en Mis materas y la clave que la API mostró una sola vez.
-// La placa canjea la clave por su token al arrancar. Si se pierde la clave, «Cambiar sensor» con el
-// mismo código entrega otra (y la anterior, con su token, deja de servir).
-#define CODIGO_SENSOR "MT-0001-AA"
-#define CLAVE_SENSOR "pegue-aqui-la-clave"
 
 // Cada cuánto se envía una lectura, en milisegundos.
 #define INTERVALO_MS 15000

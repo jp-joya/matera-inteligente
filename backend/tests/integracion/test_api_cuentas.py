@@ -111,7 +111,7 @@ def test_un_token_valido_de_otro_alcance_responde_403_en_una_ruta_de_usuario(api
     secreto = config.ruta_secreto_jwt.read_text(encoding="utf-8")
     ahora = datetime.now(timezone.utc)
     reclamos = {"iss": "matera-inteligente", "alcance": "lecturas", "jti": "x", "iat": ahora, "exp": ahora + timedelta(hours=1)}
-    del_sensor = jwt.encode({**reclamos, "sub": "MT-0001-AA"}, secreto, algorithm="HS256")
+    del_sensor = jwt.encode({**reclamos, "sub": "A4CF12000001"}, secreto, algorithm="HS256")
 
     assert es_error(api.pedir("GET", "/usuarios/yo", del_sensor), 403, "ALCANCE_INVALIDO")
 

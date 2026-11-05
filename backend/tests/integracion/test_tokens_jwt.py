@@ -93,20 +93,20 @@ def test_un_token_que_no_es_valido_da_sesion_invalida(tokens, token):
 
 
 def test_un_token_valido_de_otro_alcance_no_sirve_como_token_de_usuario(tokens):
-    del_sensor = jwt.encode(_reclamos(alcance="lecturas", sub="MT-0001-AA"), SECRETO, algorithm=ALGORITMO)
+    del_sensor = jwt.encode(_reclamos(alcance="lecturas", sub="A4CF12000001"), SECRETO, algorithm=ALGORITMO)
 
     with pytest.raises(AlcanceInvalido):
         tokens.verificar_usuario(del_sensor)
 
 
-SENSOR = IdentidadDispositivo(CodigoSensor("MT-0001-AA"), "id-del-canje")
+SENSOR = IdentidadDispositivo(CodigoSensor("A4CF12000001"), "id-del-canje")
 
 
 def test_el_token_de_un_sensor_tiene_alcance_lecturas_y_su_codigo(tokens):
     token = tokens.emitir(SENSOR, _en(24))
 
     reclamos = jwt.decode(token, SECRETO, algorithms=[ALGORITMO], issuer=EMISOR)
-    assert (reclamos["alcance"], reclamos["sub"], reclamos["jti"]) == ("lecturas", "MT-0001-AA", "id-del-canje")
+    assert (reclamos["alcance"], reclamos["sub"], reclamos["jti"]) == ("lecturas", "A4CF12000001", "id-del-canje")
     assert tokens.verificar_dispositivo(token) == SENSOR
 
 
@@ -118,9 +118,9 @@ def test_el_token_de_un_usuario_no_sirve_como_token_de_sensor(tokens):
 @pytest.mark.parametrize(
     "token",
     [
-        jwt.encode(_reclamos(alcance="lecturas", sub="MT-0001-AA", exp=_en(-1)), SECRETO, algorithm=ALGORITMO),
+        jwt.encode(_reclamos(alcance="lecturas", sub="A4CF12000001", exp=_en(-1)), SECRETO, algorithm=ALGORITMO),
         jwt.encode(_reclamos(alcance="lecturas", sub="no-es-un-codigo"), SECRETO, algorithm=ALGORITMO),
-        jwt.encode(_reclamos(alcance="lecturas", sub="MT-0001-AA"), "otro-secreto-de-cuarenta-caracteres-xxxx", algorithm=ALGORITMO),
+        jwt.encode(_reclamos(alcance="lecturas", sub="A4CF12000001"), "otro-secreto-de-cuarenta-caracteres-xxxx", algorithm=ALGORITMO),
         "no-es-un-jwt",
     ],
     ids=["vencido", "sub que no es un codigo", "otro secreto", "mal formado"],

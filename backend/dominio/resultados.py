@@ -39,20 +39,37 @@ class CuentaUsuario:
 
 
 @dataclass(frozen=True)
-class SensorVinculado:
-    """La planta con el codigo de su sensor. La clave sale solo de aqui, una vez: la base guarda su huella."""
+class DispositivoRegistrado:
+    """El codigo de reclamo sale solo de aqui, una vez, para imprimirlo en el QR: la base guarda su huella."""
+
+    codigo: CodigoSensor
+    codigo_reclamo: str
+
+
+@dataclass(frozen=True)
+class ResultadoReclamo:
+    """La clave no va aqui: el dueno nunca la ve. clave_entregada es False si la placa no estaba conectada."""
 
     planta: Planta
     codigo: CodigoSensor
-    clave: str
+    clave_entregada: bool
+
+
+@dataclass(frozen=True)
+class EstadoDispositivo:
+    """Lo que se le dice a una placa al conectarse. Si trae clave, es nueva y la placa la tiene que guardar."""
+
+    planta: Planta | None
+    clave: str | None = None
+
+    @property
+    def vinculado(self) -> bool:
+        return self.planta is not None
 
 
 @dataclass(frozen=True)
 class PlantaConEstado:
-    """Una tarjeta de Mis materas: la planta, su sensor y su ultima medicion si hay.
-
-    El sensor solo falta en las materas creadas antes de que fuera obligatorio.
-    """
+    """Una tarjeta de Mis materas: la planta, su sensor si lo tiene y su ultima medicion si hay."""
 
     planta: Planta
     sensor: Sensor | None

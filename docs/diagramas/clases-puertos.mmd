@@ -45,7 +45,7 @@ classDiagram
         }
         class RegistroPlantas {
             <<interface>>
-            +guardar_con_sensor(planta: Planta, codigo: CodigoSensor, hash_clave: str) Planta
+            +guardar(planta: Planta) Planta
             +eliminar(planta: Planta)
         }
         class SensoresVinculados {
@@ -53,10 +53,17 @@ classDiagram
             +por_codigo(codigo: CodigoSensor) Sensor o None
             +de_planta(planta_id: int) Sensor o None
             +reemplazar(planta: Planta, sensor: Sensor)
+            +quitar(planta: Planta)
+            +nueva_clave(sensor: Sensor, hash_clave: str) bool
+        }
+        class RegistroDispositivos {
+            <<interface>>
+            +registrar(dispositivo: Dispositivo)
+            +por_codigo(codigo: CodigoSensor) Dispositivo o None
         }
         class CredencialesSensor {
             <<interface>>
-            +renovar(sensor: Sensor, token_id: str) bool
+            +renovar(sensor: Sensor, token_id: str) bool «tambien confirma la clave»
             +planta_con_token(codigo: CodigoSensor, token_id: str) Planta o None
         }
         class HistorialMediciones {
@@ -68,6 +75,12 @@ classDiagram
         class NotificadorDiagnosticos {
             <<interface>>
             +publicar(usuario_id: int, planta: Planta, registro: RegistroMedicion, diagnostico: Diagnostico)
+        }
+        class AvisosDispositivos {
+            <<interface>>
+            +conectado(codigo: CodigoSensor) bool
+            +vinculado(codigo: CodigoSensor, planta: Planta, clave: str) bool
+            +desvinculado(codigo: CodigoSensor)
         }
         class EmisorTokens {
             <<interface>>
@@ -121,6 +134,9 @@ classDiagram
         class RepositorioSensoresSqlite {
             -bd: BaseDatos
         }
+        class RepositorioDispositivosSqlite {
+            -bd: BaseDatos
+        }
         class HistorialMedicionesSqlite {
             -bd: BaseDatos
         }
@@ -145,6 +161,10 @@ classDiagram
         class NotificadorWebSocket {
             -canales: CanalesTiempoReal
             -formato: medicion_en_vivo_a_json
+        }
+        class AvisosDispositivosWebSocket {
+            -canales: CanalesDispositivos «una conexion por MAC»
+            -formatos: vinculado y desvinculado
         }
         class CanalesTiempoReal {
             -por_usuario: canales de cada usuario
@@ -179,6 +199,8 @@ classDiagram
     GeneradorSecretosSeguro ..|> GeneradorSecretos
     RelojSistema ..|> Reloj
     NotificadorWebSocket ..|> NotificadorDiagnosticos
+    AvisosDispositivosWebSocket ..|> AvisosDispositivos
+    RepositorioDispositivosSqlite ..|> RegistroDispositivos
 
     note for BaseDatos "Abre una conexión por operación y activa<br>PRAGMA foreign_keys: Flask atiende cada petición<br>en un hilo y sqlite3 no comparte conexiones<br>entre hilos. La usan los seis repositorios SQLite."
     note for CanalesTiempoReal "Las conexiones abiertas de cada usuario,<br>con un candado: se usa desde varios hilos.<br>La ruta del WebSocket (presentación) registra<br>cada pestaña; main.py le pasa estos mismos canales."
@@ -199,6 +221,8 @@ classDiagram
     style CredencialesSensor fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style HistorialMediciones fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style NotificadorDiagnosticos fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
+    style AvisosDispositivos fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
+    style RegistroDispositivos fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style EmisorTokens fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style VerificadorTokens fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style Cifrador fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
@@ -219,4 +243,6 @@ classDiagram
     style RelojSistema fill:#DAE8FC,stroke:#2f5f99,stroke-width:2px,color:#16231b
     style BaseDatos fill:#DAE8FC,stroke:#2f5f99,stroke-width:2px,color:#16231b
     style NotificadorWebSocket fill:#DAE8FC,stroke:#2f5f99,stroke-width:2px,color:#16231b
+    style AvisosDispositivosWebSocket fill:#DAE8FC,stroke:#2f5f99,stroke-width:2px,color:#16231b
+    style RepositorioDispositivosSqlite fill:#DAE8FC,stroke:#2f5f99,stroke-width:2px,color:#16231b
     style CanalesTiempoReal fill:#DAE8FC,stroke:#2f5f99,stroke-width:2px,color:#16231b

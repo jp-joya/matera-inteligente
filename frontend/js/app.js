@@ -10,17 +10,19 @@ import { crearPantallaHistorial } from "./historial.js";
 import { crearPantallaMateras } from "./materas.js";
 import { sesion } from "./sesion.js";
 import { crearTiempoReal } from "./tiempo-real.js";
+import { crearPantallaVincular } from "./vincular.js";
 
 const PUBLICAS = ["acceso"];
 // Exigen sesión (R7), también Diagnóstico y Especies. Ocultarlas no protege nada: la API
 // responde 401 sin token, y 403 en administración si el usuario no es ADMIN.
-const PRIVADAS = ["diagnostico", "especies", "materas", "historial", "cuenta", "admin"];
+// «vincular» no tiene pestaña: se llega desde el QR del sensor (#vincular?d=<MAC>&c=<código>) o desde Mis materas.
+const PRIVADAS = ["diagnostico", "especies", "materas", "historial", "cuenta", "admin", "vincular"];
 const PANTALLAS = [...PUBLICAS, ...PRIVADAS];
 const PANTALLA_INICIAL = "diagnostico";
 const DESPUES_DE_INGRESAR = "materas";
 const REINTENTO_MS = 5000;
 
-// La pantalla privada que se pidió antes de ingresar: se vuelve a ella después.
+// La pantalla privada que se pidió antes de ingresar, con sus datos (el QR del sensor): se vuelve a ella después.
 let destino = null;
 
 // Mientras haya sesión, un WebSocket trae cada medición nueva de las plantas del usuario.
@@ -38,6 +40,8 @@ const contexto = {
   tiempoReal,
   // La planta que se eligió en una pantalla, para abrir otra con esa misma planta.
   plantaElegida: null,
+  // La matera a la que se le va a vincular un sensor, desde su tarjeta en Mis materas.
+  plantaParaVincular: null,
   navegar: (pantalla) => {
     location.hash = pantalla;
   },
@@ -73,17 +77,21 @@ const pantallas = {
   materas: crearPantallaMateras(contexto),
   historial: crearPantallaHistorial(contexto),
   admin: crearPantallaAdmin(contexto),
+  vincular: crearPantallaVincular(contexto),
 };
 
+// "#vincular?d=...&c=..." pide la pantalla vincular; lo que va después del "?" lo lee esa pantalla.
+const hashPedido = () => location.hash.slice(1);
+
 function pantallaPedida() {
-  const pedida = location.hash.slice(1);
+  const pedida = hashPedido().split("?")[0];
   return PANTALLAS.includes(pedida) ? pedida : PANTALLA_INICIAL;
 }
 
 function mostrarPantalla() {
   const pedida = pantallaPedida();
   if (PRIVADAS.includes(pedida) && !sesion.activa()) {
-    destino = pedida;
+    destino = hashPedido();
     location.replace("#acceso");
     return;
   }
@@ -138,7 +146,7 @@ function pintarEnVivo(estado) {
 
 function sesionVencida() {
   pintarSesion();
-  destino = pantallaPedida();
+  destino = PRIVADAS.includes(pantallaPedida()) ? hashPedido() : pantallaPedida();
   location.replace("#acceso");
 }
 
@@ -180,6 +188,7 @@ async function cargarCatalogos() {
   diagnostico.alCargarCatalogos();
   especies.pintar();
   pantallas.materas.alCargarCatalogos();
+  pantallas.vincular.alCargarCatalogos();
   pantallas.admin.alCargarCatalogos();
 }
 

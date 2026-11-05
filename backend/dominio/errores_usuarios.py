@@ -114,14 +114,41 @@ class ApodoRepetido(ErrorDominio):
 
 class CodigoSensorInvalido(ErrorDominio):
     def __init__(self, texto: str):
-        super().__init__(f"'{texto}' no es un código de sensor válido: debe tener la forma MT-0000-XX.")
+        super().__init__(f"'{texto}' no es un código de sensor válido: deben ser las 12 cifras de la MAC de la placa.")
         self.texto = texto
 
 
 class SensorYaVinculado(ErrorDominio):
     def __init__(self, codigo: str):
-        super().__init__(f"El sensor {codigo} ya está vinculado a otra planta.")
+        super().__init__(f"El sensor {codigo} ya está vinculado a otra planta: primero hay que quitarlo de ella.")
         self.codigo = codigo
+
+
+class DispositivoYaRegistrado(ErrorDominio):
+    def __init__(self, codigo: str):
+        super().__init__(f"El sensor {codigo} ya está registrado.")
+        self.codigo = codigo
+
+
+class DispositivoNoRegistrado(ErrorDominio):
+    """Lo recibe una placa que no paso por fabrica."""
+
+    def __init__(self, codigo: str):
+        super().__init__(f"El sensor {codigo} no está registrado: tiene que pasar por fábrica.")
+        self.codigo = codigo
+
+
+class CodigoReclamoInvalido(ErrorDominio):
+    """El mismo error si el sensor no existe o si el codigo no coincide: no revela cual fallo."""
+
+    def __init__(self):
+        super().__init__("El sensor o su código de reclamo no son correctos. Revise el QR de la etiqueta.")
+
+
+class PlantaSinSensor(ErrorDominio):
+    def __init__(self, planta_id: int):
+        super().__init__(f"La planta {planta_id} no tiene un sensor vinculado.")
+        self.planta_id = planta_id
 
 
 class ClaveSensorInvalida(ErrorDominio):

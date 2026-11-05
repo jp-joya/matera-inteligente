@@ -3,7 +3,7 @@
 Matera inteligente es una API que diagnostica el estado de una planta a partir de su especie y de una medición de humedad del sustrato, luz y temperatura, con un front web estático que la consume.
 
 - **Corte 2:** cada persona tiene su cuenta (con JWT) y sus materas, y un administrador gestiona las cuentas y agrega especies.
-- **Sensor:** cada matera nace con su sensor, que puede ser un ESP32 o el simulador. El sensor canjea su clave por un token propio y reporta lecturas con la hora en que las tomó.
+- **Sensor:** cada matera tiene su sensor, un ESP32 o el simulador, que se vincula como un producto terminado: en la placa no se graba ninguna clave. El dueño escanea el QR de su etiqueta y la placa recibe su clave por su propio canal en vivo; la canjea por un token propio y reporta lecturas con la hora en que las tomó.
 - **Historial:** solo el sensor escribe en él.
 - **Pantalla del dueño:** se actualiza sola. Consulta la API cada 10 segundos y, además, recibe cada lectura al instante por WebSocket.
 
@@ -26,9 +26,12 @@ backend/
   tests/
     dominio/         reglas de negocio con dobles de prueba, sin servidor ni base de datos
     aplicacion/      casos de uso con dobles de prueba
-    integracion/     API, repositorios, JWT, migración, CSV, el servidor real, el WebSocket y el simulador
+    integracion/     API, repositorios, JWT, migración, CSV, el servidor real, los WebSocket,
+                     el simulador y la fábrica
 simulador/
   simulador_esp32.py manda lecturas a la API como el ESP32, sin hardware (ver «Simulador del ESP32»)
+fabrica/
+  fabricar_dispositivo.py  registra una placa y genera la etiqueta con su QR (ver «Vincular un sensor»)
 frontend/            HTML, CSS y JavaScript estáticos, servidos aparte
   js/api.js          peticiones a la API, con el token en las rutas privadas
   js/app.js          arranque, navegación y pantallas que exigen sesión
@@ -39,7 +42,8 @@ frontend/            HTML, CSS y JavaScript estáticos, servidos aparte
   js/especies.js     catálogo de especies
   js/acceso.js       ingresar y crear cuenta
   js/cuenta.js       mi cuenta y cerrar sesión
-  js/materas.js      mis materas: crearlas con su sensor y cambiarles el sensor
+  js/materas.js      mis materas: crearlas, quitarles el sensor y eliminarlas
+  js/vincular.js     vincular un sensor con el QR de su etiqueta
   js/historial.js    historial de una planta
   js/admin.js        administración de cuentas y especies
   js/formularios.js  errores de la API en los formularios
@@ -104,7 +108,7 @@ La API queda en `http://127.0.0.1:5000/api/v1`. Se puede configurar con variable
 
 | Variable | Por defecto |
 |---|---|
-| `MATERA_HOST` | `127.0.0.1`: solo este PC. Con `0.0.0.0` la API queda abierta a la red, ver [Mediciones de un ESP32](#mediciones-de-un-esp32-en-la-red) |
+| `MATERA_HOST` | `127.0.0.1`: solo este PC. Con `0.0.0.0` la API queda abierta a la red, ver [ESP32 y celular en la red](#esp32-y-celular-en-la-red) |
 | `MATERA_PUERTO` | `5000` |
 | `MATERA_RUTA_BD` | `backend/datos/matera.sqlite` |
 | `MATERA_ORIGENES_CORS` | `http://localhost:5500,http://127.0.0.1:5500` |
@@ -154,21 +158,43 @@ El CSV es una copia de la base, de solo lectura:
 
 Para volver a la base, se borra la variable (`Remove-Item Env:MATERA_TABLA_REFERENCIA`) o se pone en `bd`, y se reinicia.
 
-### Mediciones de un ESP32 en la red
+### Vincular un sensor: el recorrido completo
 
-Por defecto la API solo responde en el mismo PC (`127.0.0.1`), así que un ESP32 conectado al WiFi no la alcanza. Para la demo con la placa, el PC y el ESP32 tienen que estar en la misma red, y se arranca así, desde `backend/`:
+En la placa no se graba ninguna clave: el firmware es el mismo para todas. El recorrido, como el de un producto terminado:
+
+1. **Fábrica (una vez por placa).** La placa muestra su código al encender, por el monitor serie: es su MAC (`Codigo del sensor (MAC): A4CF12345678`). Un admin la registra y obtiene la etiqueta con el QR, desde la raíz del repositorio:
+
+   ```bash
+   python -m pip install -r backend/requirements-dev.txt   # trae la librería qrcode
+   python fabrica/fabricar_dispositivo.py A4CF12345678 --correo admin@ejemplo.com --front http://192.168.x.x:5500
+   ```
+
+   Muestra el enlace de reclamo, `http://192.168.x.x:5500/#vincular?d=<MAC>&c=<código>`, y guarda el QR en `fabrica/etiquetas/<MAC>.svg`. El código de reclamo solo existe en esa etiqueta: la API guarda su huella. Git ignora la carpeta.
+2. **La placa enciende,** se conecta al WiFi y abre su canal en vivo con la API (`ws://…/api/v1/dispositivos/canal?codigo=<MAC>`). Sin dueño, espera.
+3. **El dueño escanea el QR** con el celular, ingresa a su cuenta y elige la matera (o crea una ahí mismo).
+4. **La API genera la clave y se la manda a la placa por su canal.** Si estaba apagada, la recibe al conectarse. El dueño nunca la ve.
+5. **La placa guarda la clave en su memoria (NVS) y la canjea por su token,** como antes. El primer canje confirma la clave: desde ahí, conectarse ya no entrega otra.
+6. **Quitar el sensor** o borrar la matera anula su clave y su token, y se le avisa a la placa, que vuelve a esperar dueño. El mismo QR sirve para reclamarla otra vez, y reclamarla otra vez para la misma matera le da una clave nueva si perdió la suya.
+
+Riesgo reconocido: el canal se abre solo con la MAC, así que alguien en la misma red que la conozca podría abrirlo antes que la placa y recibir la clave de una placa recién reclamada. Por eso la clave se entrega solo mientras la placa no la canjee, y la conexión más reciente reemplaza a la anterior. En producción iría sobre TLS y con una placa que pruebe su identidad.
+
+### ESP32 y celular en la red
+
+Por defecto la API solo responde en el mismo PC (`127.0.0.1`), así que ni el ESP32 ni el celular que escanea el QR la alcanzan. Para la demo, el PC, el ESP32 y el celular tienen que estar en la misma red, y se arranca así, desde `backend/`, con la IP del PC en esa red:
 
 ```powershell
 $env:MATERA_HOST = "0.0.0.0"
+$env:MATERA_ORIGENES_CORS = "http://localhost:5500,http://127.0.0.1:5500,http://192.168.x.x:5500"
 python main.py
 ```
 
-Al arrancar, Flask muestra una línea `Running on http://192.168.x.x:5000` con la dirección del PC en la red. Si el PC tiene una VPN o varias redes, puede mostrar otra; en ese caso la que va en el ESP32 es la «Dirección IPv4» del adaptador WiFi que muestra `ipconfig`.
+El tercer origen es el front abierto desde el celular: sin él, su navegador no puede leer la API. El front busca la API en el mismo equipo que lo sirve, en el puerto 5000. Al arrancar, Flask muestra una línea `Running on http://192.168.x.x:5000` con la dirección del PC en la red. Si el PC tiene una VPN o varias redes, puede mostrar otra; en ese caso la que va en el ESP32 y en los orígenes es la «Dirección IPv4» del adaptador WiFi que muestra `ipconfig`.
 
-El firewall de Windows bloquea el puerto para otros equipos. Se abre una vez, en una PowerShell como administrador, con la red WiFi marcada como privada:
+El firewall de Windows bloquea los puertos para otros equipos. Se abren una vez, en una PowerShell como administrador, con la red WiFi marcada como privada:
 
 ```powershell
 New-NetFirewallRule -DisplayName "Matera API 5000" -Direction Inbound -Protocol TCP -LocalPort 5000 -Action Allow -Profile Private
+New-NetFirewallRule -DisplayName "Matera front 5500" -Direction Inbound -Protocol TCP -LocalPort 5500 -Action Allow -Profile Private
 ```
 
 Windows suele marcar el hotspot del celular como red pública, y entonces esa regla no aplica. Con el PC conectado al hotspot, se marca la red como privada, también como administrador:
@@ -177,48 +203,52 @@ Windows suele marcar el hotspot del celular como red pública, y entonces esa re
 Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
 ```
 
-Para cerrarlo después de la demo:
+Para cerrarlos después de la demo:
 
 ```powershell
 Remove-NetFirewallRule -DisplayName "Matera API 5000"
+Remove-NetFirewallRule -DisplayName "Matera front 5500"
 ```
 
-El ESP32 le habla a la API en dos pasos, con el código de su matera y la clave que entregó Mis materas al crearla. Primero canjea la clave por su token, de alcance «lecturas», que vence a las 24 horas:
+El ESP32 le habla a la API con su MAC como código. Cuando recibe su clave por el canal, la canjea por su token, de alcance «lecturas», que vence a las 24 horas:
 
 ```http
-POST http://192.168.x.x:5000/api/v1/dispositivos/MT-0001-AA/token
+POST http://192.168.x.x:5000/api/v1/dispositivos/A4CF12345678/token
 Content-Type: application/json
 
-{"clave": "<la clave del sensor>"}
+{"clave": "<la clave que le llegó por su canal>"}
 ```
 
 Después manda cada lectura con ese token y la hora en que la tomó, en UTC:
 
 ```http
-POST http://192.168.x.x:5000/api/v1/dispositivos/MT-0001-AA/lecturas
+POST http://192.168.x.x:5000/api/v1/dispositivos/A4CF12345678/lecturas
 Content-Type: application/json
 Authorization: Bearer <el token del canje>
 
-{"dispositivo": "MT-0001-AA", "momento": "2026-10-22T15:04:05Z", "lecturas": {"humedad": 53, "luz": 1500, "temperatura": 25.5}}
+{"dispositivo": "A4CF12345678", "momento": "2026-10-22T15:04:05Z", "lecturas": {"humedad": 53, "luz": 1500, "temperatura": 25.5}}
 ```
 
 Sin la cabecera `Content-Type: application/json`, la API no lee el cuerpo y responde `400 SOLICITUD_INVALIDA`. Al ESP32 no le aplica CORS, porque no es un navegador. El programa de la placa y las conexiones de los sensores están en [firmware/README.md](firmware/README.md).
 
-Con `0.0.0.0`, cualquiera en esa red puede llamar la API, y los tokens y la clave del sensor viajan sin cifrar, porque es HTTP. Además el servidor de Flask es de desarrollo. Sirve para la demo en una red de confianza; al terminar, cierre la terminal (la variable se borra con ella) y el puerto del firewall.
+Con `0.0.0.0`, cualquiera en esa red puede llamar la API, y los tokens, el código de reclamo y la clave del sensor viajan sin cifrar, porque es HTTP. Además el servidor de Flask es de desarrollo. Sirve para la demo en una red de confianza; al terminar, cierre la terminal (las variables se borran con ella) y los puertos del firewall.
 
 ### Simulador del ESP32
 
-`simulador/simulador_esp32.py` manda lecturas a la API como el ESP32, sin hardware. Hace lo mismo que la placa (el canje, el token y las lecturas con su hora), y además genera lecturas fuera de rango y datos inválidos. Es un script aparte: no importa nada del backend y solo usa la biblioteca estándar de Python.
+`simulador/simulador_esp32.py` manda lecturas a la API como el ESP32, sin hardware. Hace lo mismo que la placa (el canal, la clave, el canje, el token y las lecturas con su hora), y además genera lecturas fuera de rango y datos inválidos. Es un script aparte: no importa nada del backend; además de la biblioteca estándar usa `simple-websocket`, que ya instala el backend.
 
-Conviene darle su propia matera en Mis materas, distinta de la de la placa, porque cada canje deja sin efecto el token anterior del mismo sensor. Créela con la especie **potos**: los valores «normales» del simulador están dentro de sus rangos, así salen saludables, y las lecturas fuera de rango se distinguen. Con otra especie, por ejemplo la sansevieria, las normales también pueden salir en riesgo. Desde la raíz del repositorio, con el backend corriendo:
+Conviene darle su propio código, distinto del de la placa (por ejemplo `A4CF12000012`), y su propia matera, porque cada canje deja sin efecto el token anterior del mismo sensor. Créela con la especie **potos**: los valores «normales» del simulador están dentro de sus rangos, así salen saludables, y las lecturas fuera de rango se distinguen. Con otra especie, por ejemplo la sansevieria, las normales también pueden salir en riesgo. Desde la raíz del repositorio, con el backend corriendo, se registra en fábrica una vez y después se lanza:
 
 ```powershell
-python simulador/simulador_esp32.py MT-0002-AB --clave=<clave> --intervalo 5 --fuera-de-rango 0.2 --invalidas 0.1
+python fabrica/fabricar_dispositivo.py A4CF12000012 --correo admin@ejemplo.com
+python simulador/simulador_esp32.py A4CF12000012 --intervalo 5 --fuera-de-rango 0.2 --invalidas 0.1
 ```
 
 ```powershell
-python simulador/simulador_esp32.py MT-0002-AB --clave=<clave> --casos
+python simulador/simulador_esp32.py A4CF12000012 --casos
 ```
+
+La primera vez, el simulador dice que espera dueño: abra el enlace que mostró la fábrica y reclámelo para su matera. La clave le llega por su canal y la guarda en `simulador/.memoria/` (lo que en la placa es la NVS), así que las veces siguientes empieza de una.
 
 - **Modo continuo** (el primero): manda una lectura cada `--intervalo` segundos (5 por defecto) hasta Ctrl+C, o `--veces` lecturas.
   - Los valores cambian poco a poco, como en una matera de verdad: la humedad baja despacio y sube de golpe cuando se «riega».
@@ -236,9 +266,9 @@ python simulador/simulador_esp32.py MT-0002-AB --clave=<clave> --casos
   - una clave equivocada en el canje.
 
   Termina con «12 de 12 como se esperaba». El caso del alcance (un token de usuario en la ruta del sensor, `403 ALCANCE_INVALIDO`) no está, porque el simulador no tiene cuenta de usuario: lo cubren las pruebas de integración.
-- **La clave:** si no se da `--clave`, se pide en la consola sin mostrarla, así no queda en el historial de la terminal. También sirve la variable `MATERA_CLAVE_SENSOR`. Va con signo igual (`--clave=<clave>`) porque una clave puede empezar con guion.
-- **Otras opciones:** `--api` cambia la dirección (por defecto `http://127.0.0.1:5000/api/v1`) y `--semilla` repite la misma secuencia de valores.
-- **Código de salida:** 0 si todo salió como se esperaba; 1 si la API respondió algo inesperado o rechazó la clave; 2 si no se pudo contactar la API al empezar.
+- **La clave:** no se escribe en ningún lado. Si lo quitan de su matera, la clave guardada deja de servir: el simulador la borra y, la próxima vez, vuelve a esperar dueño.
+- **Otras opciones:** `--api` cambia la dirección (por defecto `http://127.0.0.1:5000/api/v1`), `--semilla` repite la misma secuencia de valores, `--espera` limita los segundos que espera dueño y `--memoria` cambia la carpeta de la clave.
+- **Código de salida:** 0 si todo salió como se esperaba; 1 si la API respondió algo inesperado, rechazó la clave o la placa no pasó por fábrica; 2 si no se pudo contactar la API al empezar; 3 si nadie lo reclamó a tiempo.
 
 ### La demo de la sustentación
 
@@ -277,7 +307,8 @@ El front no tiene rangos, umbrales ni reglas. Los parámetros, las especies, los
 | Diagnóstico | con sesión | Consulta `POST /diagnosticos` mientras se escribe (espera 400 ms después de la última tecla) y muestra el estado en los anillos. Los botones Saludable, En riesgo y Crítico llenan valores de ejemplo a partir de los rangos, y la API decide el estado. El panel "Errores de la API" envía peticiones inválidas a propósito. No guarda nada. |
 | Especies | con sesión | Muestra el catálogo de `GET /especies` con bandas escaladas según los límites físicos de `GET /parametros`. |
 | Ingresar / Crear cuenta | pública | Dos formularios. Al entrar guarda el token y vuelve a la pantalla privada que se había pedido. |
-| Mis materas | con sesión | Las materas del usuario con su última medición, que se actualiza sola (ver abajo). «Agregar matera» pide apodo, especie y código del sensor, y muestra la clave del sensor una sola vez: va en `config.h` de la placa o en `--clave=` del simulador. Cada tarjeta permite cambiar el sensor (con el mismo código, da una clave nueva y la anterior deja de servir con su token), ver el historial y eliminar la matera. Desde el front no se escriben mediciones. |
+| Mis materas | con sesión | Las materas del usuario con su sensor y su última medición, que se actualiza sola (ver abajo). «Agregar matera» pide apodo y especie. Cada tarjeta dice si su sensor ya recibió y canjeó su clave, y permite vincular o quitar el sensor, ver el historial y eliminar la matera. Desde el front no se escriben mediciones. |
+| Vincular un sensor | con sesión | Se llega desde el QR de la etiqueta (`#vincular?d=<MAC>&c=<código>`), con «Vincular un sensor» o desde una tarjeta. Pide la matera, o una nueva, y reclama la placa. Si no hay sesión, pasa por Ingresar y vuelve con los datos del QR. El código se quita de la dirección al leerlo. |
 | Historial | con sesión | La lista, la gráfica y el resumen de las mediciones de una planta, con el estado que calculó la API en su momento. Se actualiza solo, igual que Mis materas. |
 | Mi cuenta | con sesión | Nombre, correo, rol, cantidad de plantas y cerrar sesión. |
 | Administración | solo admin | Activar, desactivar, dar o quitar el rol y eliminar cuentas; agregar especies. La pestaña solo aparece para un admin, pero los permisos los revisa la API. |
@@ -384,11 +415,11 @@ Los valores pueden llegar como números o como texto numérico (`"32.5"` o `"32,
 
 Todas van bajo `/api/v1`, y hay dos clases de token, los dos JWT firmados por el servidor:
 - **El del usuario:** lo entrega `POST /sesiones`, con alcance «usuario». Todas las rutas del front lo piden en la cabecera `Authorization: Bearer <token>`: las del corte 1, las de la sesión, las de las plantas y las de administración. Solo crear cuenta e iniciar sesión no lo piden.
-- **El del sensor:** lo entrega `POST /dispositivos/{codigo}/token` a cambio de la clave, con alcance «lecturas». Solo sirve para reportar lecturas de ese sensor.
+- **El del sensor:** lo entrega `POST /dispositivos/{codigo}/token` a cambio de la clave que la placa recibió por su canal, con alcance «lecturas». Solo sirve para reportar lecturas de ese sensor.
 
 Un token no sirve en las rutas del otro (`403 ALCANCE_INVALIDO`). El servidor guarda el id de cada token:
 - Cerrar sesión o desactivar la cuenta anula el token del usuario. Además, los sensores de una cuenta desactivada quedan en pausa: el canje y las lecturas responden `403 CUENTA_DESACTIVADA` hasta que el admin la reactive.
-- Un canje nuevo o un cambio de sensor anula el token del sensor.
+- Un canje nuevo, quitar el sensor o reclamar la placa otra vez anula el token del sensor.
 
 En los dos casos el token deja de servir aunque no haya vencido.
 
@@ -398,25 +429,42 @@ En los dos casos el token deja de servir aunque no haya vencido.
 | `POST /sesiones` | pública | 201 · `{token, venceEn, usuario}`; el token es el JWT de la sesión |
 | `DELETE /sesiones/actual` | sesión | 200 · `{mensaje}` |
 | `GET /usuarios/yo` | sesión | 200 · `{id, nombre, correo, rol, plantas}` |
-| `GET /plantas` | sesión | 200 · lista con `sensor` y `ultimaMedicion` |
-| `POST /plantas` | sesión | 201 · `{planta, codigo, clave}`. El cuerpo lleva `{apodo, especie, codigo}`: la matera nace con su sensor, y la clave solo aparece aquí |
-| `DELETE /plantas/{id}` | sesión | 200 · borra también su sensor y su historial |
-| `PUT /plantas/{id}/sensor` | sesión | 200 · `{planta, codigo, clave}`. Cambia el sensor, o da una clave nueva con el mismo código; el historial se conserva, y la clave anterior y su token dejan de servir |
+| `GET /plantas` | sesión | 200 · lista con `sensor` (`{codigo, listo}` o `null`) y `ultimaMedicion`. `listo` dice si la placa ya canjeó su clave |
+| `POST /plantas` | sesión | 201 · `{id, apodo, especie}`. El cuerpo lleva `{apodo, especie}`: la matera se crea sin sensor |
+| `DELETE /plantas/{id}` | sesión | 200 · borra su historial; su placa queda libre y se le avisa |
+| `DELETE /plantas/{id}/sensor` | sesión | 200 · quita el sensor: su clave y su token dejan de servir, se le avisa a la placa y el historial se conserva |
+| `POST /dispositivos/{codigo}/reclamo` | sesión | 201 · `{planta, sensor, claveEntregada}`. El cuerpo lleva `{codigoReclamo, plantaId}`, del QR. Si la planta tenía otra placa, la reemplaza; reclamar la misma para la misma matera le da una clave nueva. La clave no viene aquí: viaja solo por el canal de la placa |
 | `GET /plantas/{id}/historial?limite=30` | sesión | 200 · `{planta, registros}`, el más reciente primero |
 | `POST /dispositivos/{codigo}/token` | la clave del sensor, en el cuerpo `{clave}` | 200 · `{token, venceEn}`: el JWT del sensor. Deja sin efecto el token anterior del mismo sensor |
 | `POST /dispositivos/{codigo}/lecturas` | token del sensor | 201 · `{planta, momento, diagnostico}`. El cuerpo lleva `{dispositivo, momento, lecturas}`; se guarda con la hora del cuerpo y el código como origen, y se avisa en vivo |
 | `WS /tiempo-real` | token en el primer mensaje | WebSocket: una medición nueva de las plantas del usuario por mensaje (ver abajo) |
+| `WS /dispositivos/canal?codigo=<MAC>` | la MAC | WebSocket de la placa: recibe su clave y los avisos (ver abajo) |
 | `GET /admin/usuarios` | admin | 200 · lista de `{id, correo, nombre, rol, activo, cantidadPlantas}` |
 | `PATCH /admin/usuarios/{id}` | admin | 200 · el cuerpo lleva `{activo}` o `{rol}` |
-| `DELETE /admin/usuarios/{id}` | admin | 200 · borra la cuenta con sus plantas, sensores e historial |
+| `DELETE /admin/usuarios/{id}` | admin | 200 · borra la cuenta con sus plantas e historial; sus placas quedan libres |
 | `POST /admin/especies` | admin | 201 · la especie, con la misma forma que en `GET /especies` |
+| `POST /admin/dispositivos` | admin | 201 · `{codigo, codigoReclamo}`. El paso de fábrica: el cuerpo lleva `{codigo}`, la MAC. El código de reclamo solo aparece aquí, para imprimirlo en el QR |
 
 Las reglas de la lectura de un sensor:
-- **El cuerpo:** `{"dispositivo": "MT-0001-AA", "momento": "2026-10-22T15:04:05Z", "lecturas": {"humedad": 53, "luz": 1500, "temperatura": 25.5}}`. Las lecturas tienen la forma de `POST /diagnosticos`, sin la especie, que es la de la planta.
+- **El cuerpo:** `{"dispositivo": "A4CF12345678", "momento": "2026-10-22T15:04:05Z", "lecturas": {"humedad": 53, "luz": 1500, "temperatura": 25.5}}`. Las lecturas tienen la forma de `POST /diagnosticos`, sin la especie, que es la de la planta.
 - **La hora:** va en ISO 8601 con zona horaria y se guarda en UTC. La API rechaza una hora sin zona o más de 2 minutos por delante de la suya.
 - **El sensor:** `dispositivo` tiene que ser el mismo sensor del token y de la URL.
 
-Una planta de otro usuario responde 404, igual que una que no existe. No hay medición a mano: el historial solo guarda lo que mandó un sensor. Las mediciones a mano que se guardaron antes conservan el origen `MANUAL`.
+Una planta de otro usuario responde 404, igual que una que no existe. No hay medición a mano: el historial solo guarda lo que mandó un sensor. Las mediciones que se guardaron antes conservan su origen (`MANUAL` o el código `MT-…` del sensor de entonces).
+
+### El canal de la placa: `WS /api/v1/dispositivos/canal?codigo=<MAC>`
+
+La placa lo abre al encender y lo mantiene abierto. Solo dice su MAC. La conexión más reciente de una MAC reemplaza a la anterior: una placa que se reinicia no queda bloqueada por su conexión vieja.
+
+| Mensaje del servidor | Cuándo |
+|---|---|
+| `{"tipo": "estado", "vinculado": false}` | Al conectarse, sin dueño. |
+| `{"tipo": "estado", "vinculado": true, "planta": {id, apodo}}` | Al conectarse, con dueño y con la clave ya canjeada. |
+| `{"tipo": "vinculado", "planta": {id, apodo}, "clave"}` | Al reclamarla, o al conectarse si todavía no canjeó la que se le dio: la clave es nueva y la anterior deja de servir. |
+| `{"tipo": "desvinculado"}` | La quitaron de su matera, la reemplazó otra placa o se borró la matera. |
+| `{"tipo": "error", "error", "mensaje"}` | `CODIGO_SENSOR_INVALIDO` o `DISPOSITIVO_NO_REGISTRADO`. Después se cierra con 1008. |
+
+La placa no manda nada por el canal: confirma su clave al canjearla. Este canal no revisa el `Origin`: no usa cookies ni la sesión del navegador, y la librería del ESP32 manda el suyo (`file://`).
 
 ### Tiempo real: `WS /api/v1/tiempo-real`
 
@@ -450,22 +498,24 @@ Todas las respuestas de error, incluidas las de rutas inexistentes, tienen la fo
 | Ruta inexistente / método no permitido | 404 / 405 | `RUTA_NO_ENCONTRADA` / `METODO_NO_PERMITIDO` | `ruta` |
 | Error inesperado | 500 | `ERROR_INTERNO` | vacío |
 | Correo, nombre, contraseña, apodo o rango inválidos | 400 | `PARAMETRO_INVALIDO` | `campo`, `motivo` |
-| Código de sensor con otra forma (no `MT-0000-XX`) al crear la matera o al cambiarle el sensor | 400 | `CODIGO_SENSOR_INVALIDO` | `campo`, `motivo`, `texto` |
+| Código de sensor que no es una MAC (12 cifras hexadecimales), al registrar la placa en fábrica | 400 | `CODIGO_SENSOR_INVALIDO` | `campo`, `motivo`, `texto` |
 | La hora de una lectura que no es ISO 8601 o que no se puede pasar a UTC (por ejemplo, el año 1 con zona) | 400 | `PARAMETRO_INVALIDO` | `campo: "momento"`, `motivo: "formato"` |
 | La hora de una lectura sin zona horaria o más de 2 minutos en el futuro | 400 | `MOMENTO_INVALIDO` | `campo: "momento"`, `motivo: "invalido"` |
 | Correo o contraseña incorrectos (el mismo en los dos casos) | 401 | `CREDENCIALES_INVALIDAS` | vacío |
 | Sin token de usuario, con la firma alterada, vencido, con la sesión cerrada o de una cuenta desactivada | 401 | `SESION_INVALIDA` | vacío |
 | Sensor inexistente, código mal formado o clave incorrecta en el canje (el mismo en los tres casos) | 401 | `CLAVE_SENSOR_INVALIDA` | vacío |
-| Sin token del sensor, con la firma alterada, vencido o anulado por otro canje o por un cambio de sensor: la placa vuelve a canjear | 401 | `CREDENCIAL_DISPOSITIVO_INVALIDA` | vacío |
+| Sin token del sensor, con la firma alterada, vencido o anulado por otro canje, por quitar el sensor o por reclamarlo otra vez: la placa vuelve a canjear | 401 | `CREDENCIAL_DISPOSITIVO_INVALIDA` | vacío |
 | Cuenta desactivada al iniciar sesión, o el sensor de una matera suya canjea o reporta | 403 | `CUENTA_DESACTIVADA` | vacío |
 | Acción de administración sin ser admin | 403 | `PERMISO_DENEGADO` | vacío |
 | Un token válido de otro alcance: el de un sensor en una ruta de usuario o al revés | 403 | `ALCANCE_INVALIDO` | `esperado` |
 | Un sensor que reporta por otro (en la URL o en el cuerpo) | 403 | `DISPOSITIVO_AJENO` | `autenticado`, `reportado` |
+| Placa inexistente, código mal escrito o código de reclamo incorrecto al reclamarla (el mismo en los tres casos) | 403 | `CODIGO_RECLAMO_INVALIDO` | vacío |
 | Abrir el WebSocket desde un origen que no es el del front | 403 | `ORIGEN_NO_PERMITIDO` | `origen` |
-| Un `GET` normal (sin WebSocket) a `/tiempo-real` | 400 | `SOLICITUD_INVALIDA` | `ruta` |
+| Un `GET` normal (sin WebSocket) a `/tiempo-real` o a `/dispositivos/canal` | 400 | `SOLICITUD_INVALIDA` | `ruta` |
 | Planta inexistente o de otro usuario, también si se borró mientras llegaba una lectura de su sensor | 404 | `PLANTA_NO_ENCONTRADA` | `planta_id` |
 | Usuario inexistente | 404 | `USUARIO_NO_ENCONTRADO` | `referencia` |
-| Correo, apodo, especie o código de sensor repetidos (el código, si es de otra planta) | 409 | `CORREO_YA_REGISTRADO`, `APODO_REPETIDO`, `ESPECIE_YA_EXISTE`, `SENSOR_YA_VINCULADO` | el dato repetido |
+| Quitar el sensor de una matera que no tiene | 404 | `PLANTA_SIN_SENSOR` | `planta_id` |
+| Correo, apodo, especie o MAC repetidos, o reclamar una placa que ya es de otra matera (solo se dice con el código de reclamo correcto) | 409 | `CORREO_YA_REGISTRADO`, `APODO_REPETIDO`, `ESPECIE_YA_EXISTE`, `DISPOSITIVO_YA_REGISTRADO`, `SENSOR_YA_VINCULADO` | el dato repetido |
 | Agregar una especie con la tabla de referencia en CSV | 409 | `TABLA_SOLO_LECTURA` | vacío |
 | Un admin actúa sobre su propia cuenta | 409 | `ACCION_SOBRE_SI_MISMO` | vacío |
 

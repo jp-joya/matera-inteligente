@@ -8,19 +8,17 @@ habla por HTTP.
 """
 from concurrent.futures import ThreadPoolExecutor
 
-from tests.integracion.conftest import medir_http
+from tests.integracion.conftest import cuenta_http, matera_http, medir_http
 from tests.integracion.conftest import pedir_http as _pedir
 
 
-def test_el_servidor_real_atiende_un_recorrido_completo_con_la_misma_base(base_url):
-    assert _pedir(base_url, "POST", "/usuarios", {"nombre": "Ana", "correo": "ana@correo.co", "contrasena": "clave-segura"})[0] == 201
-    _, sesion = _pedir(base_url, "POST", "/sesiones", {"correo": "ana@correo.co", "contrasena": "clave-segura"})
-    token = sesion["token"]
-    estado, matera = _pedir(base_url, "POST", "/plantas", {"apodo": "Sala", "especie": "potos", "codigo": "MT-0001-AA"}, token)
-    assert estado == 201
+def test_el_servidor_real_atiende_un_recorrido_completo_con_la_misma_base(base_url, config):
+    # Cuenta, matera, fabrica, la placa abre su canal, el dueno la reclama con el QR y la placa recibe su clave.
+    token = cuenta_http(base_url)
+    matera = matera_http(base_url, config, token)
 
     lecturas = {"humedad": 50, "luz": 800, "temperatura": 20}
-    estado, medicion = medir_http(base_url, "MT-0001-AA", matera["clave"], lecturas)
+    estado, medicion = medir_http(base_url, "A4CF12000001", matera["clave"], lecturas)
 
     assert estado == 201 and medicion["diagnostico"]["estado"] == "SALUDABLE"
     assert _pedir(base_url, "GET", "/plantas", token=token)[1][0]["ultimaMedicion"]["estado"] == "SALUDABLE"

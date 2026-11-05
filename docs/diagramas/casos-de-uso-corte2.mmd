@@ -2,6 +2,8 @@
 %% Gris: casos del corte 1. Verde: casos nuevos. Oscuro: solo el administrador.
 %% Solo el sensor escribe lecturas: no hay medicion a mano. Desde la fase 2 (22 de octubre de 2026) primero canjea
 %% su clave por un token de alcance "lecturas" y con ese token reporta cada lectura con su hora.
+%% Desde noviembre la placa no lleva clave grabada: el administrador la registra en fabrica (QR de su etiqueta),
+%% el dueno la reclama con ese QR y la placa recibe su clave por su canal en vivo.
 %% Las pantallas del usuario (materas e historial) se actualizan solas: vuelven a pedir sus datos cada 10 s y ademas reciben cada medicion por el WebSocket.
 %% Con la tabla de referencia en CSV (copia de solo lectura) el administrador no puede agregar especies: la API responde 409.
 %% Desde la fase 2 (R7) todas las rutas del front exigen el JWT de usuario: consultar especies y diagnosticar tambien piden sesion,
@@ -13,6 +15,7 @@ flowchart LR
     usuario["Usuario registrado"]
     admin["Administrador"]
     subgraph SIS["Matera inteligente · corte 2"]
+        uc17(["Recibir su clave por su canal"])
         uc16(["Canjear su clave por un token"])
         uc11(["Reportar una lectura con su hora"])
         uc12(["Guardar en el historial"])
@@ -23,14 +26,17 @@ flowchart LR
         uc4(["Crear cuenta"])
         uc5(["Iniciar sesión"])
         uc7(["Ver mis materas, que se actualizan solas<br/>(cada 10 s y en vivo)"])
-        uc6(["Crear una matera con su sensor y borrarla"])
-        uc8(["Cambiar el sensor de una matera"])
+        uc6(["Crear y borrar una matera"])
+        uc8(["Vincular un sensor con su QR o quitarlo"])
         uc9(["Ver el historial de una planta"])
         uc10(["Ver mi cuenta y cerrar sesión"])
         uc13(["Administrar usuarios"])
         uc14(["Agregar especies<br/>(con la tabla en CSV, 409)"])
+        uc18(["Registrar un sensor en fábrica<br/>(QR de su etiqueta)"])
     end
+    sensor --- uc17
     sensor --- uc16
+    uc8 -.->|entrega| uc17
     sensor --- uc11
     uc11 -.->|incluye| uc2
     uc11 -.->|incluye| uc12
@@ -50,6 +56,7 @@ flowchart LR
     admin -->|también es| usuario
     admin --- uc13
     admin --- uc14
+    admin --- uc18
 
     classDef actor fill:#ffffff,stroke:#56665b,stroke-width:1.5px,color:#16231b
     classDef caso fill:#f5f8f4,stroke:#7b887f,color:#16231b
@@ -57,5 +64,5 @@ flowchart LR
     classDef soloAdmin fill:#16231b,stroke:#16231b,color:#ffffff
     class visitante,usuario,admin,sensor actor
     class uc1,uc2,uc3 caso
-    class uc4,uc5,uc6,uc7,uc8,uc9,uc10,uc11,uc12,uc15,uc16 nuevo
-    class uc13,uc14 soloAdmin
+    class uc4,uc5,uc6,uc7,uc8,uc9,uc10,uc11,uc12,uc15,uc16,uc17 nuevo
+    class uc13,uc14,uc18 soloAdmin

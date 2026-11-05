@@ -20,13 +20,13 @@ def clave_desde_json(cuerpo: Any) -> str:
 
 
 def reporte_desde_json(cuerpo: Any) -> ReporteDeDispositivo:
-    """{"dispositivo": "MT-0001-AA", "momento": "2026-10-22T15:04:05Z", "lecturas": {"humedad": 53, ...}}"""
+    """{"dispositivo": "A4CF12345678", "momento": "2026-10-22T15:04:05Z", "lecturas": {"humedad": 53, ...}}"""
     cuerpo = _objeto(cuerpo)
     texto_dispositivo = _texto(cuerpo, "dispositivo")
     try:
         dispositivo = CodigoSensor(texto_dispositivo)
     except CodigoSensorInvalido:
-        raise _invalido("dispositivo", "invalido", f"'{texto_dispositivo}' no es un código de sensor: MT-0000-XX.") from None
+        raise _invalido("dispositivo", "invalido", f"'{texto_dispositivo}' no es un código de sensor: la MAC de la placa.") from None
     momento = _momento(_texto(cuerpo, "momento"))
     lecturas = cuerpo.get("lecturas")
     if not isinstance(lecturas, dict):

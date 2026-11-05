@@ -136,7 +136,7 @@ def test_con_el_csv_una_planta_se_registra_con_una_especie_de_la_copia(config):
     api = ClienteApi(dataclasses.replace(config, tabla_referencia="csv"))
     token = api.cuenta()
 
-    respuesta = api.pedir("POST", "/plantas", token, json={"apodo": "Sala", "especie": "potos", "codigo": "MT-0001-AA"})
+    respuesta = api.pedir("POST", "/plantas", token, json={"apodo": "Sala", "especie": "potos", "codigo": "A4CF12000001"})
 
     assert respuesta.status_code == 201
 

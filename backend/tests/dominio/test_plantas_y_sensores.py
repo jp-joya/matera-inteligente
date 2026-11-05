@@ -51,10 +51,10 @@ def test_dos_apodos_que_solo_cambian_en_mayusculas_o_espacios_son_el_mismo():
 
 
 def test_el_codigo_del_sensor_se_acepta_en_minusculas_y_se_guarda_en_mayusculas():
-    assert CodigoSensor(" mt-0042-ab ").valor == "MT-0042-AB"
+    assert CodigoSensor(" a4:cf:12:00:00:42 ").valor == "A4CF12000042"
 
 
-@pytest.mark.parametrize("texto", ["", "MT-42-AB", "MT-0042-A1", "XX-0042-AB", "MT-0042-ABC"])
+@pytest.mark.parametrize("texto", ["", "A4CF1200004", "A4CF120000420", "G4CF12000042", "MT-0042-AB"])
 def test_un_codigo_de_sensor_con_otra_forma_se_rechaza(texto):
     with pytest.raises(CodigoSensorInvalido):
         CodigoSensor(texto)
@@ -65,7 +65,7 @@ def test_el_registro_conserva_los_estados_del_diagnostico_y_su_origen():
         sansevieria(), medicion(humedad=18, luz=800, temperatura=22)
     )
 
-    registro = RegistroMedicion.desde(diagnostico, planta_id=5, momento=MOMENTO, origen="MT-0001-AA")
+    registro = RegistroMedicion.desde(diagnostico, planta_id=5, momento=MOMENTO, origen="A4CF12000001")
 
     assert registro.estado is EstadoGlobal.EN_RIESGO
     assert [(l.parametro, l.valor, l.estado) for l in registro.lecturas] == [
@@ -73,4 +73,4 @@ def test_el_registro_conserva_los_estados_del_diagnostico_y_su_origen():
         (LUZ, 800, EstadoParametro.OPTIMO),
         (TEMPERATURA, 22, EstadoParametro.OPTIMO),
     ]
-    assert (registro.planta_id, registro.momento, registro.origen) == (5, MOMENTO, "MT-0001-AA")
+    assert (registro.planta_id, registro.momento, registro.origen) == (5, MOMENTO, "A4CF12000001")

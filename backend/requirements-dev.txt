@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=8
+# La etiqueta con el QR de fabrica/fabricar_dispositivo.py
+qrcode>=7.4,<9

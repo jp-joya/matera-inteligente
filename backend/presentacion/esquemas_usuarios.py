@@ -20,8 +20,10 @@ from dominio.resultados import (
     CuentaUsuario,
     HistorialPlanta,
     PlantaConEstado,
+    DispositivoRegistrado,
+    EstadoDispositivo,
     ResultadoMedicion,
-    SensorVinculado,
+    ResultadoReclamo,
     SesionIniciada,
 )
 from dominio.usuarios import ResumenUsuario, Rol, Usuario
@@ -92,14 +94,27 @@ def especie_desde_json(cuerpo: Any) -> Especie:
     return Especie(nombre, rangos, cientifico)
 
 
-def planta_desde_json(cuerpo: Any) -> tuple[str, str, str]:
-    """Una matera nueva: su apodo, su especie y el codigo de su sensor."""
+def planta_desde_json(cuerpo: Any) -> tuple[str, str]:
+    """Una matera nueva: su apodo y su especie. El sensor se le vincula despues, con el QR."""
     cuerpo = _objeto(cuerpo)
-    return _texto(cuerpo, "apodo"), _texto(cuerpo, "especie"), _texto(cuerpo, "codigo")
+    return _texto(cuerpo, "apodo"), _texto(cuerpo, "especie")
 
 
 def codigo_desde_json(cuerpo: Any) -> str:
+    """Lo que manda la herramienta de fabrica: {"codigo": "<MAC>"}."""
     return _texto(_objeto(cuerpo), "codigo")
+
+
+def reclamo_desde_json(cuerpo: Any) -> tuple[str, int]:
+    """El codigo de reclamo del QR y la matera elegida: {"codigoReclamo": "...", "plantaId": 1}."""
+    cuerpo = _objeto(cuerpo)
+    planta_id = cuerpo.get("plantaId")
+    if planta_id is None:
+        raise _invalido("plantaId", "ausente", "Falta el campo plantaId: la matera a la que se vincula el sensor.")
+    # En Python bool es subclase de int: true no es un id.
+    if not isinstance(planta_id, int) or isinstance(planta_id, bool):
+        raise _invalido("plantaId", "no_es_entero", "El campo plantaId debe ser un número entero.")
+    return _texto(cuerpo, "codigoReclamo"), planta_id
 
 
 def limite_desde_consulta(texto: str | None) -> int:
@@ -122,7 +137,10 @@ def planta_a_json(planta: Planta) -> dict[str, Any]:
 def tarjeta_a_json(tarjeta: PlantaConEstado) -> dict[str, Any]:
     return {
         **planta_a_json(tarjeta.planta),
-        "sensor": {"codigo": tarjeta.sensor.codigo.valor} if tarjeta.sensor else None,
+        # «listo»: la placa ya canjeo su clave. Antes de eso no puede reportar lecturas.
+        "sensor": {"codigo": tarjeta.sensor.codigo.valor, "listo": tarjeta.sensor.clave_confirmada}
+        if tarjeta.sensor
+        else None,
         "ultimaMedicion": registro_a_json(tarjeta.ultima_medicion) if tarjeta.ultima_medicion else None,
     }
 
@@ -144,9 +162,43 @@ def historial_a_json(historial: HistorialPlanta) -> dict[str, Any]:
     return {"planta": planta_a_json(historial.planta), "registros": [registro_a_json(r) for r in historial.registros]}
 
 
-def sensor_vinculado_a_json(vinculado: SensorVinculado) -> dict[str, Any]:
-    """Las unicas respuestas que traen la clave del sensor: crear la matera y cambiarle el sensor."""
-    return {"planta": planta_a_json(vinculado.planta), "codigo": vinculado.codigo.valor, "clave": vinculado.clave}
+def dispositivo_registrado_a_json(registrado: DispositivoRegistrado) -> dict[str, Any]:
+    """La unica respuesta que trae el codigo de reclamo: el que se imprime en el QR de la etiqueta."""
+    return {"codigo": registrado.codigo.valor, "codigoReclamo": registrado.codigo_reclamo}
+
+
+def resultado_reclamo_a_json(resultado: ResultadoReclamo) -> dict[str, Any]:
+    """La clave no va aqui: el dueno nunca la ve. Viaja solo por el canal de la placa."""
+    return {
+        "planta": planta_a_json(resultado.planta),
+        "sensor": {"codigo": resultado.codigo.valor},
+        "claveEntregada": resultado.clave_entregada,
+    }
+
+
+# Mensajes del canal en vivo de la placa (/api/v1/dispositivos/canal).
+
+
+def _planta_para_dispositivo(planta: Planta) -> dict[str, Any]:
+    return {"id": planta.id, "apodo": planta.apodo}
+
+
+def estado_dispositivo_a_json(estado: EstadoDispositivo) -> dict[str, Any]:
+    """Al conectarse. Si hay clave nueva, va en un mensaje «vinculado»."""
+    if estado.clave is not None:
+        return dispositivo_vinculado_a_json(estado.planta, estado.clave)
+    mensaje: dict[str, Any] = {"tipo": "estado", "vinculado": estado.vinculado}
+    if estado.planta is not None:
+        mensaje["planta"] = _planta_para_dispositivo(estado.planta)
+    return mensaje
+
+
+def dispositivo_vinculado_a_json(planta: Planta, clave: str) -> dict[str, Any]:
+    return {"tipo": "vinculado", "planta": _planta_para_dispositivo(planta), "clave": clave}
+
+
+def dispositivo_desvinculado_a_json() -> dict[str, Any]:
+    return {"tipo": "desvinculado"}
 
 
 def medicion_en_vivo_a_json(planta: Planta, registro: RegistroMedicion, diagnostico: Diagnostico) -> dict[str, Any]:

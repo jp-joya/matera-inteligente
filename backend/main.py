@@ -27,7 +27,14 @@ from aplicacion.historial import ConsultarHistorial
 from aplicacion.listar_especies import ListarEspecies
 from aplicacion.listar_parametros import ListarParametros
 from aplicacion.plantas import EliminarPlanta, ListarPlantas, RegistrarPlanta
-from aplicacion.sensores import CanjearClaveDispositivo, ReemplazarSensor, RegistrarLectura
+from aplicacion.sensores import (
+    AtenderDispositivo,
+    CanjearClaveDispositivo,
+    QuitarSensor,
+    ReclamarDispositivo,
+    RegistrarDispositivo,
+    RegistrarLectura,
+)
 from dominio import puertos_entrada as entrada
 from dominio.evaluador import EvaluadorPlanta
 from dominio.parametros import PARAMETROS
@@ -51,16 +58,23 @@ from infraestructura.servidor_web import crear_app
 from infraestructura.sqlite import (
     BaseDatos,
     HistorialMedicionesSqlite,
+    RepositorioDispositivosSqlite,
     RepositorioEspeciesSqlite,
     RepositorioPlantasSqlite,
     RepositorioSensoresSqlite,
     RepositorioSesionesSqlite,
     RepositorioUsuariosSqlite,
 )
-from infraestructura.tiempo_real import CanalesTiempoReal, NotificadorWebSocket
+from infraestructura.tiempo_real import (
+    AvisosDispositivosWebSocket,
+    CanalesDispositivos,
+    CanalesTiempoReal,
+    NotificadorWebSocket,
+)
 from infraestructura.tokens_jwt import TokensJwt, secreto_guardado
 from presentacion import esquemas_usuarios
 from presentacion.autenticacion import Autenticacion
+from presentacion.canal_dispositivos import crear_blueprint_canal_dispositivos
 from presentacion.rutas import crear_blueprint
 from presentacion.rutas_admin import crear_blueprint_admin
 from presentacion.rutas_dispositivos import crear_blueprint_dispositivos
@@ -98,6 +112,7 @@ def construir_app(config: Configuracion) -> Flask:
     sesiones = RepositorioSesionesSqlite(bd)
     plantas = RepositorioPlantasSqlite(bd)
     sensores = RepositorioSensoresSqlite(bd)
+    dispositivos = RepositorioDispositivosSqlite(bd)
     historial = HistorialMedicionesSqlite(bd)
     cifrador = CifradorPbkdf2(config.iteraciones_contrasena)
     secretos = GeneradorSecretosSeguro()
@@ -128,20 +143,28 @@ def construir_app(config: Configuracion) -> Flask:
         cambiar_rol=CambiarRol(usuarios, usuarios),
         eliminar=EliminarUsuario(usuarios, usuarios),
         agregar_especie=AgregarEspecie(especies, registro_especies, PARAMETROS),
+        registrar_dispositivo=RegistrarDispositivo(dispositivos, secretos),
         autenticacion=autenticacion,
     )
 
     # El aviso en vivo de cada medicion. Cambiar el WebSocket por MQTT: cambiar solo esta linea.
     canales = CanalesTiempoReal()
     notificador = NotificadorWebSocket(canales, esquemas_usuarios.medicion_en_vivo_a_json)
+    # El canal de cada placa: por ahi recibe su clave cuando su dueno la reclama con el QR.
+    canales_placas = CanalesDispositivos()
+    avisos = AvisosDispositivosWebSocket(
+        canales_placas,
+        esquemas_usuarios.dispositivo_vinculado_a_json,
+        esquemas_usuarios.dispositivo_desvinculado_a_json,
+    )
 
     # Las mediciones solo llegan del sensor, por el caso de uso de la 5.3, que reutiliza el servicio del corte 1.
     diagnosticar_planta = DiagnosticarPlantaDeUsuario(plantas, servicio, historial, notificador)
     mis_plantas = crear_blueprint_plantas(
-        registrar=RegistrarPlanta(plantas, plantas, sensores, especies, secretos),
+        registrar=RegistrarPlanta(plantas, plantas, especies),
         listar=ListarPlantas(plantas, sensores, historial),
-        eliminar=EliminarPlanta(plantas, plantas),
-        reemplazar_sensor=ReemplazarSensor(plantas, sensores, secretos),
+        eliminar=EliminarPlanta(plantas, plantas, sensores, avisos),
+        quitar_sensor=QuitarSensor(plantas, sensores, avisos),
         consultar_historial=ConsultarHistorial(plantas, historial),
         autenticacion=autenticacion,
     )
@@ -150,11 +173,17 @@ def construir_app(config: Configuracion) -> Flask:
         sensores, sensores, plantas, usuarios, secretos, tokens, reloj, config.duracion_token_dispositivo
     )
     registrar_lectura = RegistrarLectura(sensores, usuarios, diagnosticar_planta, reloj)
-    dispositivos = crear_blueprint_dispositivos(canjear, registrar_lectura, tokens)
+    reclamar = ReclamarDispositivo(dispositivos, plantas, sensores, secretos, avisos)
+    entrada_dispositivos = crear_blueprint_dispositivos(canjear, registrar_lectura, reclamar, tokens, autenticacion)
+    canal_placas = crear_blueprint_canal_dispositivos(
+        AtenderDispositivo(dispositivos, sensores, plantas, secretos), canales_placas
+    )
     # El WebSocket del front registra sus conexiones en los mismos canales que usa el notificador.
     en_vivo = crear_blueprint_tiempo_real(tokens, identificar, canales, config.origenes_cors)
 
-    return crear_app([api, cuentas, administracion, mis_plantas, dispositivos, en_vivo], config)
+    return crear_app(
+        [api, cuentas, administracion, mis_plantas, entrada_dispositivos, canal_placas, en_vivo], config
+    )
 
 
 @dataclass(frozen=True)

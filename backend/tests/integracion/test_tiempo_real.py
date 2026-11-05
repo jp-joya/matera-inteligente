@@ -38,7 +38,7 @@ class CanalFalso:
 def _medicion_de_ana():
     planta = Planta(7, ANA, "Sala", "sansevieria")
     diagnostico = EvaluadorPlanta(ReglaHibrida(), GeneradorRecomendaciones()).evaluar(sansevieria(), medicion(18, 800, 22))
-    return planta, RegistroMedicion.desde(diagnostico, planta.id, MOMENTO, "MT-0001-AA"), diagnostico
+    return planta, RegistroMedicion.desde(diagnostico, planta.id, MOMENTO, "A4CF12000001"), diagnostico
 
 
 def test_cada_canal_recibe_solo_lo_de_su_usuario_y_mientras_esta_conectado():
@@ -110,7 +110,7 @@ def test_el_notificador_manda_al_dueno_un_json_con_la_tarjeta_el_registro_y_el_d
     mensaje = json.loads(texto)
     assert mensaje["tipo"] == "medicion"
     assert mensaje["planta"] == {"id": 7, "apodo": "Sala", "especie": "sansevieria"}
-    assert mensaje["medicion"]["origen"] == "MT-0001-AA"
+    assert mensaje["medicion"]["origen"] == "A4CF12000001"
     assert mensaje["medicion"]["momento"] == MOMENTO.isoformat()
     assert mensaje["medicion"]["lecturas"][0] == {"nombre": "humedad", "valor": 18, "unidad": "%", "estado": "BAJO"}
     assert mensaje["diagnostico"]["estado"] == "EN_RIESGO"

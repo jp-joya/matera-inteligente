@@ -1256,42 +1256,33 @@ a:hover {
   margin: 10px 0 0;
 }
 
-.clave--matera {
-  margin: 0 0 22px;
+.vincular {
+  max-width: 640px;
 }
 
-.clave__ayuda {
-  flex-basis: 100%;
-  margin: 0;
-  font-size: 0.8rem;
-  color: #22523b;
-  text-wrap: pretty;
-}
-
-.matera__sensor {
+.vincular__tarjeta {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--borde-suave);
+  padding: 24px;
 }
 
-.matera__sensor .formulario__etiqueta,
-.matera__sensor .formulario__ayuda {
-  margin: 0;
+.vincular__tarjeta .formulario__etiqueta {
+  margin-top: 8px;
 }
 
-.matera__sensor-fila {
+.vincular__tarjeta .formulario__campo--codigo {
+  overflow-wrap: anywhere;
+}
+
+.vincular__acciones {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 8px;
 }
 
-.matera__sensor-fila .formulario__campo {
-  flex: 1 1 150px;
-}
-
-.matera__sensor-fila .boton-primario {
+.vincular__acciones .boton-primario {
   margin-top: 0;
 }
 
@@ -1303,31 +1294,6 @@ a:hover {
   from {
     box-shadow: 0 0 0 3px var(--acento);
   }
-}
-
-.clave {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 14px;
-  border: 1px solid #b9d7c3;
-  border-radius: 10px;
-  background: #e1f0e6;
-}
-
-.clave .rotulo {
-  flex-basis: 100%;
-  margin: 0;
-  color: #22523b;
-}
-
-.clave__texto {
-  flex: 1 1 260px;
-  font-family: var(--mono);
-  font-size: 0.86rem;
-  overflow-wrap: anywhere;
 }
 
 .historial__selector {

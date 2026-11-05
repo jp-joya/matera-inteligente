@@ -21,7 +21,7 @@ def cabe_en_sqlite(numero: int) -> bool:
 
 
 # Version del esquema, guardada en PRAGMA user_version. Una base sin numero es de antes de la fase 2.
-VERSION = 3
+VERSION = 4
 # Lo que hay que hacer en una base que ya tenia tablas para llegar a cada version. Despues,
 # esquema.sql crea lo que falte. Una base nueva no las necesita: esquema.sql ya trae lo ultimo.
 _MIGRACIONES = {
@@ -29,6 +29,10 @@ _MIGRACIONES = {
     2: "DROP TABLE IF EXISTS sesion;",
     # Cada sensor guarda el id de su JWT vigente. La clave de cada uno sigue sirviendo para el canje.
     3: "ALTER TABLE sensor ADD COLUMN token_id TEXT;",
+    # La placa ya no lleva clave grabada: se reclama con el QR de su etiqueta y su codigo es su MAC.
+    # Los sensores de antes (MT-0000-XX, con la clave pegada en el firmware) se sueltan; sus materas
+    # y su historial se conservan. esquema.sql vuelve a crear la tabla con la columna nueva.
+    4: "DROP TABLE IF EXISTS sensor;",
 }
 
 

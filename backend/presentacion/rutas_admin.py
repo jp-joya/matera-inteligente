@@ -17,6 +17,7 @@ def crear_blueprint_admin(
     cambiar_rol: entrada.CambiarRol,
     eliminar: entrada.EliminarUsuario,
     agregar_especie: entrada.AgregarEspecie,
+    registrar_dispositivo: entrada.RegistrarDispositivo,
     autenticacion: Autenticacion,
 ) -> Blueprint:
     bp = Blueprint("api_v1_admin", __name__, url_prefix="/api/v1/admin")
@@ -41,7 +42,7 @@ def crear_blueprint_admin(
     @autenticacion.con_usuario
     def eliminar_usuario(actor, usuario_id: int):
         eliminar.ejecutar(actor, usuario_id)
-        return jsonify({"mensaje": "Cuenta eliminada, con sus plantas, sensores e historial."})
+        return jsonify({"mensaje": "Cuenta eliminada, con sus plantas e historial. Sus sensores quedaron libres."})
 
     @bp.post("/especies")
     @autenticacion.con_usuario
@@ -49,6 +50,14 @@ def crear_blueprint_admin(
         especie = esquemas_usuarios.especie_desde_json(request.get_json(silent=True))
         # La misma forma que en GET /especies.
         return jsonify(esquemas.especie_a_json(agregar_especie.ejecutar(actor, especie))), 201
+
+    @bp.post("/dispositivos")
+    @autenticacion.con_usuario
+    def registrar_en_fabrica(actor):
+        # El paso de fabrica: lo usa herramientas/fabricar_dispositivo.py para imprimir la etiqueta con el QR.
+        codigo = esquemas_usuarios.codigo_desde_json(request.get_json(silent=True))
+        registrado = registrar_dispositivo.ejecutar(actor, codigo)
+        return jsonify(esquemas_usuarios.dispositivo_registrado_a_json(registrado)), 201
 
     registrar_manejadores_usuarios(bp)
     return bp

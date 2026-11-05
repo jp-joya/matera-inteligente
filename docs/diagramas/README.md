@@ -25,6 +25,7 @@ Hay diagramas de dos momentos:
 | [Clases: cuentas y administración](#presentación-y-aplicación-cuentas-y-administración) | no existía | [`clases-cuentas`](clases-cuentas.png) |
 | [Entidad-relación](#entidad-relación) | [`entidad-relacion-corte1`](entidad-relacion-corte1.png) | [`entidad-relacion-corte2`](entidad-relacion-corte2.png) |
 | [Secuencia: un diagnóstico](#secuencia-de-un-diagnóstico) | [`secuencia-diagnostico`](secuencia-diagnostico.png) | igual, con el repositorio de especies que elija la configuración |
+| [Secuencia: vinculación del sensor con el QR](#secuencia-de-la-vinculación-del-sensor) | no existía | [`secuencia-vinculacion`](secuencia-vinculacion.png) |
 | [Secuencia: lectura de un dispositivo](#secuencia-de-una-lectura-del-dispositivo) | no existía | [`secuencia-medicion-sensor`](secuencia-medicion-sensor.png) |
 | [Secuencia: tiempo real](#secuencia-del-tiempo-real) | no existía | [`secuencia-tiempo-real`](secuencia-tiempo-real.png) |
 | [Secuencia: login y «mis plantas»](#secuencia-de-login-y-mis-plantas) | no existía | [`secuencia-login`](secuencia-login.png) |
@@ -106,7 +107,7 @@ Fuente: [`casos-de-uso-corte2.mmd`](casos-de-uso-corte2.mmd).
 - **El sensor no tiene su propia lógica de diagnóstico.** «Reportar una lectura con su hora» *incluye* «Diagnosticar una planta», el mismo caso de uso del corte 1. También incluye «Guardar en el historial» y «Avisar la medición al dueño».
 - **Solo el sensor escribe en el historial.** No hay medición a mano.
 - **Mis materas se actualiza sola:** cada 10 s vuelve a pedir sus datos, y además recibe cada medición por el WebSocket.
-- **La matera nace con su sensor.** «Crear una matera con su sensor» pide el código del dispositivo. «Cambiar el sensor de una matera» reemplaza a vincular y desvincular, y conserva el historial.
+- **El sensor se vincula como un producto terminado.** El administrador lo registra en fábrica («Registrar un sensor en fábrica»), que imprime el QR de su etiqueta. El dueño crea la matera y le vincula el sensor escaneando ese QR («Vincular un sensor con su QR o quitarlo»), lo que le *entrega* al sensor su clave por su canal («Recibir su clave por su canal»). Quitar el sensor conserva el historial.
 - **Casos exclusivos del administrador:**
   - «Administrar usuarios» agrupa listar, desactivar y reactivar, dar y quitar el rol de admin, y eliminar cuentas.
   - «Agregar especies» solo lo puede hacer el admin, y solo con la tabla de referencia en la base: con la copia en CSV, la API responde 409.
@@ -175,7 +176,7 @@ Fuentes: [`clases-dominio.mmd`](clases-dominio.mmd) (los dos cortes) y [`clases-
 - **`Planta.exigir_dueno(usuario_id)` es la regla de propiedad.** Si la planta es de otro, lanza `PlantaNoEncontrada`, el mismo error que una planta que no existe. El SQL ya no filtra por dueño: la decisión es del dominio.
 - **`IdentidadUsuario` e `IdentidadDispositivo` son lo que queda de un token ya verificado:** de quién es y su `token_id` (el `jti` del JWT). Con ellas, ningún caso de uso ve el token.
 - **`ReporteDeDispositivo`** es una lectura con la hora en que la tomó el dispositivo. Exige una hora con zona horaria y no acepta una hora adelantada en más de 2 minutos (`ADELANTO_MAXIMO`).
-- **`dominio/resultados.py`** reúne los datos que entran y salen de los puertos de entrada: `SolicitudDiagnostico`, `SesionIniciada`, `SensorVinculado`, `PlantaConEstado`, `TokenDispositivo` y otros.
+- **`dominio/resultados.py`** reúne los datos que entran y salen de los puertos de entrada: `SolicitudDiagnostico`, `SesionIniciada`, `DispositivoRegistrado`, `ResultadoReclamo`, `EstadoDispositivo`, `PlantaConEstado`, `TokenDispositivo` y otros.
 - Las dos notas de errores listan los de cada corte, y los de la fase 2 van con los del corte 2. Todos heredan de `ErrorDominio`.
 
 ### Puertos e implementaciones
@@ -196,7 +197,7 @@ Fuentes: [`clases-puertos.mmd`](clases-puertos.mmd) y [`clases-puertos-corte1.mm
 - **`ConsultaPlantas.por_id(planta_id)` busca la planta sin mirar el dueño.** El caso de uso llama a `Planta.exigir_dueno`.
   - Las escrituras, `RegistroPlantas.eliminar(planta)`, `SensoresVinculados.reemplazar(planta, sensor)` y `HistorialMediciones.agregar(planta, registro)`, repiten en el SQL el id y el dueño de la planta que se leyó.
   - Así, si entre tanto la planta se borró y otra nueva tomó su id (SQLite reutiliza el id más alto), la escritura no toca la planta ajena.
-- **Una matera no existe sin sensor.** `guardar_con_sensor()` crea la planta y su sensor en una sola transacción, y `reemplazar(planta, sensor)` cambia el sensor en otra. No hay un `guardar()` que cree una planta sola.
+- **La matera se crea sola y el sensor se le vincula después.** `RegistroPlantas.guardar()` crea la planta. Al reclamar la placa, `SensoresVinculados.reemplazar(planta, sensor)` la deja como el único sensor de la planta, en una sola transacción y sin clave confirmada; `nueva_clave()` le cambia la clave mientras no la canjee y `quitar()` la suelta. Las placas registradas en fábrica están en `RegistroDispositivos`, y `AvisosDispositivos` es el canal de cada placa, como `NotificadorDiagnosticos` lo es de cada pestaña.
 - **`CredencialesSensor` guarda el token vigente de cada sensor.**
   - `renovar(sensor, token_id)` lo cambia en el canje, solo si el sensor sigue siendo el mismo: código, planta y huella de la clave.
   - `planta_con_token(codigo, token_id)` devuelve la planta solo si ese token es el vigente.
@@ -218,7 +219,7 @@ Fuentes: [`clases-aplicacion.mmd`](clases-aplicacion.mmd) y [`clases-aplicacion-
 - **Cada ruta privada se autentica a su manera:**
   - `rutas_plantas` exige sesión con `Autenticacion.con_usuario`.
   - `rutas_dispositivos` no usa la sesión. Su decorador `_con_dispositivo` verifica el JWT del dispositivo con `VerificadorTokens.verificar_dispositivo` y le pasa a `RegistrarLectura` la `IdentidadDispositivo`.
-- **`RegistrarPlanta` y `ReemplazarSensor` devuelven un `SensorVinculado`,** la planta con el código y la clave. Es la única vez que la clave sale del backend.
+- **La clave del sensor nunca sale por HTTP.** `ReclamarDispositivo` la genera y se la manda a la placa por `AvisosDispositivos`; al dueño solo le dice si se entregó. Si la placa estaba apagada, `AtenderDispositivo` le da una al conectarse. El código de reclamo sale una sola vez, en `RegistrarDispositivo`, para imprimirlo en el QR.
 - **`CanjearClaveDispositivo` cambia esa clave por un `TokenDispositivo`,** que vence a las 24 horas.
 - **La reutilización del núcleo:**
   - `RegistrarLectura` pasa la lectura a `DiagnosticarPlantaDeUsuario`.
@@ -256,10 +257,13 @@ Qué puertos usa cada caso de uso (en negrita, lo que ya existía en el corte 1)
 | `CerrarSesion` | `cuentas.py` | SesionesAbiertas |
 | `IdentificarUsuario` | `cuentas.py` | SesionesAbiertas, ConsultaCuentas, Reloj |
 | `ConsultarCuenta` | `cuentas.py` | ConsultaPlantas, para contar las plantas |
-| `RegistrarPlanta` | `plantas.py` | ConsultaPlantas, RegistroPlantas, SensoresVinculados, **ConsultaRangos**, GeneradorSecretos |
+| `RegistrarPlanta` | `plantas.py` | ConsultaPlantas, RegistroPlantas, **ConsultaRangos** |
 | `ListarPlantas` | `plantas.py` | ConsultaPlantas, SensoresVinculados, HistorialMediciones |
-| `EliminarPlanta` | `plantas.py` | ConsultaPlantas, RegistroPlantas |
-| `ReemplazarSensor` | `sensores.py` | ConsultaPlantas, SensoresVinculados, GeneradorSecretos |
+| `EliminarPlanta` | `plantas.py` | ConsultaPlantas, RegistroPlantas, SensoresVinculados, AvisosDispositivos |
+| `RegistrarDispositivo` | `sensores.py` | RegistroDispositivos, GeneradorSecretos |
+| `ReclamarDispositivo` | `sensores.py` | RegistroDispositivos, ConsultaPlantas, SensoresVinculados, GeneradorSecretos, AvisosDispositivos |
+| `AtenderDispositivo` | `sensores.py` | RegistroDispositivos, SensoresVinculados, ConsultaPlantas, GeneradorSecretos |
+| `QuitarSensor` | `sensores.py` | ConsultaPlantas, SensoresVinculados, AvisosDispositivos |
 | `CanjearClaveDispositivo` | `sensores.py` | SensoresVinculados, CredencialesSensor, ConsultaPlantas, ConsultaCuentas, GeneradorSecretos, EmisorTokens, Reloj y la duración del token |
 | `RegistrarLectura` | `sensores.py` | CredencialesSensor, ConsultaCuentas, Reloj, DiagnosticarPlantaDeUsuario |
 | `DiagnosticarPlantaDeUsuario` (sin puerto de entrada) | `diagnosticar_planta_de_usuario.py` | ConsultaPlantas, **ServicioDiagnostico**, HistorialMediciones, NotificadorDiagnosticos |
@@ -293,7 +297,7 @@ Fuente: [`entidad-relacion-corte2.mmd`](entidad-relacion-corte2.mmd).
 - **`PLANTA.especie` es una llave foránea real,** también cuando la tabla de referencia es el CSV. No se puede registrar una planta con una especie inexistente, ni borrar una especie que alguna planta use.
 - **`RANGO_OPTIMO` y `LECTURA` guardan una fila por parámetro**, así que agregar el pH no cambia el esquema.
 - `USUARIO.rol` es USUARIO o ADMIN, y `USUARIO.activo` permite desactivar una cuenta sin borrarla.
-- **Una matera nueva nace con su `SENSOR`,** en la misma transacción. La relación sigue siendo 0..1 por las materas creadas antes de que el sensor fuera obligatorio. Cambiar el sensor reemplaza esa fila y no toca `MEDICION`.
+- **`DISPOSITIVO` es la placa registrada en fábrica,** con la huella del código de su QR; existe tenga o no dueño. **`SENSOR` es su vínculo con una planta,** y existe solo mientras la placa tenga dueño: borrar la planta lo borra en cascada y la placa queda libre. `SENSOR.clave_confirmada` pasa a 1 con el primer canje. Quitar el sensor no toca `MEDICION`. La migración a la versión 4 suelta los sensores de antes (código `MT-…` con la clave pegada en el firmware).
 - **Ninguna tabla guarda un secreto.**
   - `SENSOR.hash_clave` es la huella SHA-256 de la clave.
   - `SESION.token_id` y `SENSOR.token_id` son el id (`jti`) del JWT, no el token. Si se cierra la sesión, o cambia el `token_id` del sensor, el token deja de servir aunque no haya vencido.
@@ -316,6 +320,17 @@ En el corte 2 este recorrido no cambia. Solo cambian tres cosas:
 - La ruta exige el JWT de usuario (R7). Antes de llamar al caso de uso, `Autenticacion.con_usuario` lo verifica como en la [secuencia de login](#secuencia-de-login-y-mis-plantas).
 - La ruta llama al puerto de entrada `DiagnosticarPlanta`, que hereda el caso de uso.
 - El participante `P` es el repositorio que se configuró detrás del mismo puerto `ConsultaRangos`: `RepositorioEspeciesSqlite` o `RepositorioEspeciesCsv`, según `MATERA_TABLA_REFERENCIA`.
+
+### Secuencia de la vinculación del sensor
+
+![Secuencia de la vinculación del sensor](secuencia-vinculacion.png)
+
+Fuente: [`secuencia-vinculacion.mmd`](secuencia-vinculacion.mmd). Corte 2, desde noviembre de 2026.
+
+- **En la placa no se graba ningún secreto.** En fábrica se registra su MAC y se imprime el QR con el código de reclamo; la API guarda solo su huella.
+- **La placa abre su canal solo con su MAC** y espera. El dueño escanea el QR con su sesión iniciada: el código de reclamo prueba que tiene la etiqueta.
+- **La clave viaja solo por el canal de la placa,** nunca por la respuesta HTTP al dueño. Si la placa está apagada, recibe otra al conectarse.
+- **El canje la confirma.** Desde ahí, conectarse ya no entrega otra, y todo sigue como en la secuencia de la lectura. Riesgo reconocido: alguien en la red que conozca la MAC podría abrir el canal antes que una placa recién reclamada.
 
 ### Secuencia de una lectura del dispositivo
 

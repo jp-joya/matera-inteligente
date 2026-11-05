@@ -127,11 +127,14 @@ export const obtenerMiCuenta = () => privada("/usuarios/yo");
 
 // ---- plantas, sensores e historial ----
 
-// Una matera nace con su sensor: POST /plantas lleva apodo, especie y código, y responde la clave una vez.
+// La matera se crea sin sensor. El sensor se vincula después, con el QR de su etiqueta: el front manda
+// el código de reclamo y la placa recibe su clave por su propio canal. El front nunca la ve.
 export const obtenerPlantas = () => privada("/plantas");
 export const registrarPlanta = (datos) => privada("/plantas", conJson("POST", datos));
 export const eliminarPlanta = (id) => privada(`/plantas/${id}`, { method: "DELETE" });
-export const cambiarSensor = (id, codigo) => privada(`/plantas/${id}/sensor`, conJson("PUT", { codigo }));
+export const quitarSensor = (id) => privada(`/plantas/${id}/sensor`, { method: "DELETE" });
+export const reclamarDispositivo = (codigo, codigoReclamo, plantaId) =>
+  privada(`/dispositivos/${encodeURIComponent(codigo)}/reclamo`, conJson("POST", { codigoReclamo, plantaId }));
 
 // Las mediciones no se escriben desde el front: llegan del sensor y se ven aquí en vivo (tiempo-real.js).
 export const obtenerHistorial = (id, limite) => privada(`/plantas/${id}/historial?limite=${limite}`);

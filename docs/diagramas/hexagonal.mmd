@@ -7,7 +7,8 @@
 %% verde dominio y azul infraestructura.
 flowchart LR
     NAV["Front en el navegador<br/>(fetch cada 10 s y WebSocket)"]
-    ESP["ESP32 o<br/>simulador/simulador_esp32.py<br/>(HTTP con su JWT)"]
+    ESP["ESP32 o<br/>simulador/simulador_esp32.py<br/>(su canal en vivo con la MAC;<br/>HTTP con su JWT)"]
+    FAB["fabrica/fabricar_dispositivo.py<br/>(HTTP con el JWT de un admin)"]
     MAIN["main.py<br/>único punto de composición:<br/>elige el adaptador de cada puerto<br/>(MATERA_TABLA_REFERENCIA: SQLite o CSV)"]
 
     subgraph ENT["Entrada · presentacion/"]
@@ -15,33 +16,37 @@ flowchart LR
         FRONT["Rutas del front<br/>rutas.py · rutas_usuarios.py<br/>rutas_plantas.py · rutas_admin.py<br/>decorador Autenticacion.con_usuario"]
         WS["WebSocket<br/>tiempo_real.py"]
         DISP["Rutas de dispositivos<br/>rutas_dispositivos.py<br/>decorador con_dispositivo"]
+        CANAL["Canal de la placa<br/>canal_dispositivos.py<br/>(WebSocket, solo con la MAC)"]
         CONSOLA["Consola<br/>crear_admin.py<br/>exportar_especies_csv.py"]
         PRUEBAS["Pruebas unitarias<br/>tests/dominio · tests/aplicacion<br/>(dobles de los puertos de salida)"]
     end
 
     subgraph NUCLEO["Núcleo · dominio/ + aplicacion/"]
-        PE["Puertos de entrada<br/>dominio/puertos_entrada.py<br/><br/>DiagnosticarPlanta · ListarEspecies<br/>ListarParametros · RegistrarUsuario<br/>IniciarSesion · CerrarSesion<br/>IdentificarUsuario · ConsultarCuenta<br/>RegistrarPlanta · ListarPlantas<br/>EliminarPlanta · ReemplazarSensor<br/>ConsultarHistorial<br/>CanjearClaveDispositivo · RegistrarLectura<br/>ListarUsuarios · CambiarEstadoUsuario<br/>CambiarRol · EliminarUsuario<br/>AgregarEspecie · ConvertirEnAdministrador"]
+        PE["Puertos de entrada<br/>dominio/puertos_entrada.py<br/><br/>DiagnosticarPlanta · ListarEspecies<br/>ListarParametros · RegistrarUsuario<br/>IniciarSesion · CerrarSesion<br/>IdentificarUsuario · ConsultarCuenta<br/>RegistrarPlanta · ListarPlantas<br/>EliminarPlanta · QuitarSensor<br/>ConsultarHistorial<br/>RegistrarDispositivo · ReclamarDispositivo<br/>AtenderDispositivo<br/>CanjearClaveDispositivo · RegistrarLectura<br/>ListarUsuarios · CambiarEstadoUsuario<br/>CambiarRol · EliminarUsuario<br/>AgregarEspecie · ConvertirEnAdministrador"]
         CU["Casos de uso · aplicacion/<br/>cada uno hereda el puerto<br/>de su mismo nombre<br/>(más DiagnosticarPlantaDeUsuario)"]
         REGLAS["Reglas del dominio<br/>sin Flask, SQLite, CSV, JWT, JSON ni HTTP<br/><br/>Lectura · Medicion · Especie · Rango<br/>ServicioDiagnostico · EvaluadorPlanta<br/>ReglaHibrida · Planta.exigir_dueno<br/>Usuario.exigir_admin<br/>ReporteDeDispositivo<br/>IdentidadUsuario · IdentidadDispositivo"]
-        PS["Puertos de salida<br/>dominio/puertos.py · puertos_usuarios.py<br/><br/>ConsultaRangos · CatalogoEspecies<br/>RegistroEspecies · ConsultaCuentas<br/>RegistroCuentas · ListadoCuentas<br/>SesionesAbiertas · ConsultaPlantas<br/>RegistroPlantas · SensoresVinculados<br/>CredencialesSensor · HistorialMediciones<br/>NotificadorDiagnosticos · EmisorTokens<br/>VerificadorTokens · Cifrador<br/>GeneradorSecretos · Reloj"]
+        PS["Puertos de salida<br/>dominio/puertos.py · puertos_usuarios.py<br/><br/>ConsultaRangos · CatalogoEspecies<br/>RegistroEspecies · ConsultaCuentas<br/>RegistroCuentas · ListadoCuentas<br/>SesionesAbiertas · ConsultaPlantas<br/>RegistroPlantas · SensoresVinculados<br/>RegistroDispositivos<br/>CredencialesSensor · HistorialMediciones<br/>NotificadorDiagnosticos · AvisosDispositivos<br/>EmisorTokens<br/>VerificadorTokens · Cifrador<br/>GeneradorSecretos · Reloj"]
     end
 
     subgraph SAL["Salida · infraestructura/"]
         direction TB
-        SQLITE["SQLite · sqlite/<br/>RepositorioUsuariosSqlite<br/>RepositorioSesionesSqlite<br/>RepositorioPlantasSqlite<br/>RepositorioSensoresSqlite<br/>HistorialMedicionesSqlite<br/>RepositorioEspeciesSqlite"]
+        SQLITE["SQLite · sqlite/<br/>RepositorioUsuariosSqlite<br/>RepositorioSesionesSqlite<br/>RepositorioPlantasSqlite<br/>RepositorioSensoresSqlite<br/>RepositorioDispositivosSqlite<br/>HistorialMedicionesSqlite<br/>RepositorioEspeciesSqlite"]
         CSV["CSV · repositorio_especies_csv.py<br/>RepositorioEspeciesCsv<br/>EspeciesDeSoloLectura<br/>RegistroEspeciesConCopiaCsv"]
         JWT["JWT · tokens_jwt.py<br/>TokensJwt (PyJWT)"]
-        OTROS["seguridad.py · reloj.py · tiempo_real.py<br/>CifradorPbkdf2 · GeneradorSecretosSeguro<br/>RelojSistema · NotificadorWebSocket"]
+        OTROS["seguridad.py · reloj.py · tiempo_real.py<br/>CifradorPbkdf2 · GeneradorSecretosSeguro<br/>RelojSistema · NotificadorWebSocket<br/>AvisosDispositivosWebSocket"]
     end
 
     NAV --> FRONT
     NAV --> WS
     ESP --> DISP
+    ESP --> CANAL
+    FAB --> FRONT
     MAIN -. "conecta los adaptadores<br/>de entrada y de salida" .-> ENT
 
     FRONT --> PE
     WS --> PE
     DISP --> PE
+    CANAL --> PE
     CONSOLA --> PE
     PRUEBAS --> PE
     FRONT -- "verificar_usuario" --> PS
@@ -67,11 +72,11 @@ flowchart LR
     classDef dominio fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     classDef infraestructura fill:#DAE8FC,stroke:#2f5f99,stroke-width:2px,color:#16231b
     classDef externo fill:#ffffff,stroke:#8a9a8e,stroke-width:1.5px,color:#16231b
-    class FRONT,DISP,WS,CONSOLA,PRUEBAS presentacion
+    class FRONT,DISP,CANAL,WS,CONSOLA,PRUEBAS presentacion
     class CU aplicacion
     class PE,REGLAS,PS dominio
     class SQLITE,CSV,JWT,OTROS infraestructura
-    class ESP,NAV,MAIN externo
+    class ESP,FAB,NAV,MAIN externo
     style NUCLEO fill:#f7fbf6,stroke:#2e6a4e,stroke-width:3px,color:#16231b
     style ENT fill:#fbf8fc,stroke:#c9b8d3,color:#16231b
     style SAL fill:#f6f9fd,stroke:#b9cbe3,color:#16231b

@@ -1,27 +1,37 @@
 # Firmware del sensor (ESP32)
 
-`matera-sensor/` es el programa de la placa. Lee la temperatura y la humedad del aire (DHT11) y si hay luz (módulo LDR), y le habla a la API igual que el simulador (`simulador/simulador_esp32.py`), en dos pasos:
+`matera-sensor/` es el programa de la placa. Lee la temperatura y la humedad del aire (DHT11) y si hay luz (módulo LDR), y le habla a la API igual que el simulador (`simulador/simulador_esp32.py`).
 
-1. **Canje.** Al arrancar, cambia la clave del sensor por un token de alcance «lecturas», que vence a las 24 horas:
+En la placa no se graba ninguna clave: el firmware es el mismo para todas. Su código es su MAC, que viene de fábrica en el chip.
+
+0. **Canal en vivo.** Al encender abre un WebSocket con la API solo con su MAC, y lo mantiene abierto:
 
    ```http
-   POST /api/v1/dispositivos/MT-0001-AA/token
+   GET ws://<API>/api/v1/dispositivos/canal?codigo=A4CF12345678
+   ```
+
+   Sin dueño, la API responde `{"tipo":"estado","vinculado":false}` y la placa espera. Cuando el dueño la reclama con el QR de su etiqueta, la API le manda su clave: `{"tipo":"vinculado","clave":"…"}`. La placa la guarda en su memoria (NVS, con `Preferences`) y la canjea. Si la quitan de su matera, recibe `{"tipo":"desvinculado"}` y la borra.
+
+1. **Canje.** Cambia la clave por un token de alcance «lecturas», que vence a las 24 horas. El primer canje también le confirma a la API que la placa guardó la clave:
+
+   ```http
+   POST /api/v1/dispositivos/A4CF12345678/token
    Content-Type: application/json
 
-   {"clave":"<la clave que dio la API al crear la matera>"}
+   {"clave":"<la que le llegó por el canal>"}
    ```
 
 2. **Lecturas.** Cada 15 segundos manda una lectura con ese token y la hora en que la tomó:
 
    ```http
-   POST /api/v1/dispositivos/MT-0001-AA/lecturas
+   POST /api/v1/dispositivos/A4CF12345678/lecturas
    Content-Type: application/json
    Authorization: Bearer <el token del canje>
 
-   {"dispositivo":"MT-0001-AA","momento":"2026-10-22T15:04:05Z","lecturas":{"humedad":53.0,"luz":1500,"temperatura":25.5}}
+   {"dispositivo":"A4CF12345678","momento":"2026-10-22T15:04:05Z","lecturas":{"humedad":53.0,"luz":1500,"temperatura":25.5}}
    ```
 
-Si la API responde que el token ya no sirve (venció, o lo reemplazó otro canje), la placa vuelve a canjear la clave sola. La placa no decide nada: el backend calcula el estado y las recomendaciones, guarda la lectura y la muestra en Mis materas.
+Si la API responde que el token ya no sirve (venció, o lo reemplazó otro canje), la placa vuelve a canjear la clave sola. Si la que rechaza es la clave, la borra y vuelve a abrir el canal para ver si todavía tiene dueño. La placa no decide nada: el backend calcula el estado y las recomendaciones, guarda la lectura y la muestra en Mis materas.
 
 ## Placa y conexiones
 
@@ -42,24 +52,27 @@ Con el potos (humedad de 40 a 70 %, luz de 270 a 2150 lux y temperatura de 16 a 
 ## Instalación en el Arduino IDE 2
 
 1. **Placa:** el soporte de Espressif para ESP32, versión 2.0.14. En *Herramientas → Placa* se elige **ESP32 Dev Module**, y el puerto que aparezca al conectar la placa (en este PC, COM4).
-2. **Librerías**, desde el gestor de librerías: **DHT sensor library**, de Adafruit (se probó con la 1.4.7). El gestor ofrece instalar también Adafruit Unified Sensor: hay que aceptarlo. `WiFi.h`, `HTTPClient.h` y la hora por NTP (`time.h`) vienen con la placa. El JSON se arma a mano, sin ArduinoJson.
-3. **Configuración:** se copia `matera-sensor/config.example.h` como `matera-sensor/config.h` y se completa. Git ignora `config.h`, porque lleva la clave del WiFi y la del sensor.
+2. **Librerías**, desde el gestor de librerías:
+   - **DHT sensor library**, de Adafruit (se probó con la 1.4.7). El gestor ofrece instalar también Adafruit Unified Sensor: hay que aceptarlo.
+   - **WebSockets**, de Markus Sattler (Links2004): el canal en vivo con la API.
+
+   `WiFi.h`, `HTTPClient.h`, `Preferences.h` y la hora por NTP (`time.h`) vienen con la placa. El JSON se arma y se lee a mano, sin ArduinoJson.
+3. **Configuración:** se copia `matera-sensor/config.example.h` como `matera-sensor/config.h` y se completa. Git ignora `config.h`, porque lleva la clave del WiFi. No lleva ninguna clave del sensor.
 
 | Dato | Qué va |
 |---|---|
 | `WIFI_SSID`, `WIFI_CLAVE` | La red de 2,4 GHz. Para la demo, el hotspot del celular. La ESP32 no ve las redes de 5 GHz; en iPhone hay que encender «Maximizar compatibilidad». La red tiene que dar salida a internet, porque la hora sale de NTP. |
-| `API_BASE` | `http://<IP del PC>:5000/api/v1`. La IP sale de `ipconfig` («Dirección IPv4» del adaptador WiFi). |
-| `CODIGO_SENSOR` | El código con el que se creó la matera en Mis materas, por ejemplo `MT-0001-AA`. |
-| `CLAVE_SENSOR` | La clave que la API mostró una sola vez al crear la matera. Si se perdió, «Cambiar sensor» con el mismo código da otra, y la anterior deja de servir con su token. |
+| `API_BASE` | `http://<IP del PC>:5000/api/v1`. La IP sale de `ipconfig` («Dirección IPv4» del adaptador WiFi). Por ahí van el canal en vivo, el canje y las lecturas. |
 | `INTERVALO_MS` | Cada cuánto se envía una lectura: 15 000, es decir, 15 segundos. |
 | `LDR_CON_LUZ` | `LOW` o `HIGH`: lo que da la salida del módulo cuando hay luz. En la mayoría es `LOW`. Para saberlo, se tapa el sensor y se mira el monitor serie. |
 | `LUX_CON_LUZ`, `LUX_SIN_LUZ` | Los lux que se mandan con luz y sin luz: 1500 y 50. |
 
-4. **Subir el programa:** *Subir* en el IDE. Esta placa reinicia sola al modo de descarga, así que no hay que apretar BOOT. Subir el programa borra el que tenga la placa.
+4. **Subir el programa:** *Subir* en el IDE. Esta placa reinicia sola al modo de descarga, así que no hay que apretar BOOT. Subir el programa borra el que tenga la placa, pero no la clave guardada en la NVS (salvo con *Herramientas → Erase All Flash Before Sketch Upload* activado).
+5. **Fábrica, una vez por placa:** con el monitor serie abierto, la placa muestra `Codigo del sensor (MAC): …`. Con ese código se registra y se imprime su etiqueta con el QR: `python fabrica/fabricar_dispositivo.py <MAC> --correo <admin>` (ver «Vincular un sensor» en el README principal).
 
 ## El backend para la demo
 
-El backend tiene que escuchar en la red, no solo en el PC. Los comandos están en la sección «Mediciones de un ESP32 en la red» del README principal: arrancar con `MATERA_HOST=0.0.0.0` y permitir el puerto en el firewall.
+El backend tiene que escuchar en la red, no solo en el PC, y el front también, porque el celular que escanea el QR lo abre en la IP del PC. Los comandos están en la sección «ESP32 y celular en la red» del README principal: arrancar con `MATERA_HOST=0.0.0.0`, agregar el origen del front en esa IP a `MATERA_ORIGENES_CORS` y permitir los puertos 5000 y 5500 en el firewall.
 
 - Windows suele marcar el hotspot del celular como red **pública**, y la regla del firewall del README es para redes **privadas**. Una vez conectado el PC al hotspot, se marca la red como privada como administrador: `Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private`.
 - El hotspot puede darle otra IP al PC cada vez que se conecta. Antes de cada demo se revisa con `ipconfig`; si cambió, se corrige `API_BASE` y se vuelve a subir el programa.
@@ -71,16 +84,19 @@ El monitor serie va a **115 200 baudios**.
 | LED | Significa |
 |---|---|
 | Parpadeo lento | Conectándose al WiFi. |
-| Fijo | Conectada al WiFi. |
+| Un destello cada 2 segundos | Conectada, esperando que su dueño la reclame con el QR. |
+| Fijo | Con su clave: canjea y manda lecturas. |
 | Apagado | Sin WiFi: espera 30 segundos y vuelve a intentar. |
 | Cinco parpadeos rápidos | Algo falló, por ejemplo: sin WiFi, sin hora, la API no responde, la clave fue rechazada o el DHT11 no respondió. El monitor serie dice qué. |
+
+**Botón BOOT apretado 5 segundos:** borra la clave guardada. Para volver a medir, el dueño la reclama otra vez con el QR.
 
 Si algo traba el programa más de un minuto, la placa se reinicia sola y vuelve a empezar.
 
 Al arrancar, la placa:
-1. Muestra su código y la dirección de la API.
-2. Se conecta al WiFi.
-3. Toma la hora por NTP y canjea la clave. Si no llega al backend, lo dice en este paso. La placa solo usa sus dos rutas: las demás exigen el token de un usuario.
+1. Muestra su código (la MAC), la dirección de la API y si tiene una clave guardada.
+2. Se conecta al WiFi y abre su canal en vivo. Si nadie la ha reclamado, lo dice y espera; si no pasó por fábrica, la API responde `DISPOSITIVO_NO_REGISTRADO` y el monitor serie muestra el comando para registrarla.
+3. Con su clave, toma la hora por NTP y la canjea. Si no llega al backend, lo dice en este paso. La placa solo usa sus rutas: las demás exigen el token de un usuario.
 
 Después, en cada vuelta, muestra lo que envió y lo que respondió la API: `201, la planta está SALUDABLE`, o el error con su código (por ejemplo, `400 MOMENTO_INVALIDO` si la hora de la placa está mal).
 
@@ -88,4 +104,4 @@ Si no se conecta al WiFi, el monitor serie dice el motivo y lista las redes que 
 
 ## Para probar sin la placa
 
-`simulador/simulador_esp32.py` hace lo mismo que la placa, desde el PC: el canje, las lecturas con su hora y, además, los casos fuera de rango y los datos inválidos. El README principal explica cómo usarlo. Conviene darle su propia matera: cada canje deja sin efecto el token anterior del mismo sensor.
+`simulador/simulador_esp32.py` hace lo mismo que la placa, desde el PC: el canal, la clave, el canje, las lecturas con su hora y, además, los casos fuera de rango y los datos inválidos. El README principal explica cómo usarlo. Conviene darle su propio código y su propia matera: cada canje deja sin efecto el token anterior del mismo sensor.

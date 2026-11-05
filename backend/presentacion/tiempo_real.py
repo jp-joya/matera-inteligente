@@ -37,6 +37,8 @@ from presentacion.errores_http import respuesta_error
 _log = logging.getLogger(__name__)
 
 RUTA = "/api/v1/tiempo-real"
+# Las rutas que solo hablan WebSocket. presentacion/canal_dispositivos.py agrega la suya.
+RUTAS_WEBSOCKET = {RUTA}
 # Segundos que se espera el mensaje con el token.
 ESPERA_AUTENTICACION = 5
 # Cada cuantos segundos se revisa la sesion de una conexion que no recibe nada.
@@ -138,6 +140,10 @@ class CanalWebSocket:
             hilo_lector.join(timeout=ESPERA_CIERRE)
         self._apagar_socket()
 
+    def cortar(self) -> None:
+        """Corta la conexion desde otro hilo: la usa el canal de una placa cuando otra conexion lo reemplaza."""
+        self._cortar()
+
     def _encolar(self, elemento: str | _Cierre) -> None:
         try:
             self._cola.put_nowait(elemento)
@@ -230,8 +236,8 @@ def crear_blueprint_tiempo_real(
     @bp.app_errorhandler(WebsocketMismatch)
     def websocket_equivocado(error: WebsocketMismatch):
         # Sin esto, un GET normal a la ruta del WebSocket recibiria el texto en ingles de Werkzeug.
-        if request.path == RUTA:
-            mensaje = f"{RUTA} es un WebSocket: ábralo con new WebSocket(...), no con fetch."
+        if request.path in RUTAS_WEBSOCKET:
+            mensaje = f"{request.path} es un WebSocket: ábralo con new WebSocket(...), no con fetch."
         else:
             mensaje = f"{request.path} no es un WebSocket: pídala por HTTP."
         return respuesta_error(400, "SOLICITUD_INVALIDA", mensaje, {"ruta": request.path})

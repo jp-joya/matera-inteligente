@@ -1,9 +1,16 @@
 """Simulador del ESP32 (R3): manda lecturas a la API como la placa, sin hardware.
 
-Hace lo mismo que el firmware: canjea la clave del sensor por un token de
-alcance «lecturas» y reporta cada lectura con su hora, en el cuerpo
-{dispositivo, momento, lecturas}. No importa nada del backend: le habla a la
-API por HTTP, como cualquier dispositivo, y solo usa la biblioteca estandar.
+Hace lo mismo que el firmware, sin ninguna clave escrita a mano:
+  1. Abre el canal en vivo de la placa solo con su codigo (la MAC). Si nadie la
+     ha reclamado, espera: reclamela desde el front con el QR o el enlace que dio
+     backend/herramientas/fabricar_dispositivo.py.
+  2. Cuando llega la clave por el canal, la guarda en un archivo (lo que en la
+     placa es la memoria NVS) y la canjea por un token de alcance «lecturas».
+  3. Reporta cada lectura con su hora, en el cuerpo {dispositivo, momento, lecturas}.
+
+No importa nada del backend: le habla a la API por la red, como cualquier
+dispositivo. Ademas de la biblioteca estandar usa simple-websocket, que ya
+instala el backend (flask-sock).
 
 Dos modos:
   continuo (por defecto): una lectura cada --intervalo segundos, hasta Ctrl+C o --veces.
@@ -15,21 +22,18 @@ Dos modos:
 Si la API deja de responder a mitad del modo continuo (un corte del WiFi, o el backend
 que se reinicia para cambiar de tabla de referencia), lo dice y sigue intentando: no hay
 que volver a lanzarlo. Si el token vencio, canjea la clave otra vez, tambien antes de un
-caso de error.
+caso de error. Si la quitaron de su matera, borra la clave guardada.
 
 Uso, desde la raiz del repositorio:
-    python simulador/simulador_esp32.py MT-0002-AB --clave=<clave>
-    python simulador/simulador_esp32.py MT-0002-AB --clave=<clave> --intervalo 5 --fuera-de-rango 0.2 --invalidas 0.1
-    python simulador/simulador_esp32.py MT-0002-AB --clave=<clave> --casos
+    python simulador/simulador_esp32.py A4CF12000012
+    python simulador/simulador_esp32.py A4CF12000012 --intervalo 5 --fuera-de-rango 0.2 --invalidas 0.1
+    python simulador/simulador_esp32.py A4CF12000012 --casos
 
-La clave es la que muestra la API una sola vez al crear la matera. Si no se da,
-se pide en la consola sin mostrarla; tambien sirve MATERA_CLAVE_SENSOR. Va con
-signo igual (--clave=<clave>) porque una clave puede empezar con guion. Conviene
-que el simulador tenga su propia matera: cada canje deja sin efecto el token
-anterior del mismo sensor.
+Antes, la placa se registra en fabrica (backend/herramientas/fabricar_dispositivo.py
+A4CF12000012 ...). Conviene que el simulador tenga su propia matera: cada canje deja
+sin efecto el token anterior del mismo sensor.
 """
 import argparse
-import getpass
 import json
 import math
 import os
@@ -41,8 +45,14 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from simple_websocket import Client, ConnectionClosed
+from simple_websocket import ConnectionError as ConexionRechazada
 
 API_POR_DEFECTO = "http://127.0.0.1:5000/api/v1"
+# La «memoria NVS» de las placas simuladas: la clave de cada una. Git la ignora.
+MEMORIA_POR_DEFECTO = Path(__file__).resolve().parent / ".memoria"
 # Valores posibles que casi ninguna especie tolera: la API los acepta y los diagnostica fuera de rango.
 FUERA_DE_RANGO = (("humedad", 8.0, "humedad muy baja"), ("luz", 50.0, "casi sin luz"), ("temperatura", 38.0, "demasiado calor"))
 # Lo que responde la API cuando el token vencio o lo reemplazo otro canje: el simulador canjea otra vez.
@@ -105,6 +115,79 @@ class Resumen:
 
 class SinConexion(Exception):
     """La API no respondio: no esta corriendo, no se llega a ella o se corto la conexion."""
+
+
+class Memoria:
+    """La NVS de la placa: un archivo con la clave que recibio por su canal."""
+
+    def __init__(self, carpeta: Path, codigo: str):
+        self._archivo = Path(carpeta) / f"{codigo}.json"
+
+    def leer(self) -> str | None:
+        try:
+            return json.loads(self._archivo.read_text(encoding="utf-8"))["clave"]
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def guardar(self, clave: str) -> None:
+        self._archivo.parent.mkdir(parents=True, exist_ok=True)
+        self._archivo.write_text(json.dumps({"clave": clave}), encoding="utf-8")
+
+    def borrar(self) -> None:
+        self._archivo.unlink(missing_ok=True)
+
+
+class SinClave(Exception):
+    """La placa no consiguio su clave: nadie la reclamo a tiempo o la API la rechazo. codigo es el de salida."""
+
+    def __init__(self, mensaje: str, codigo: int):
+        super().__init__(mensaje)
+        self.codigo = codigo
+
+
+def esperar_clave(api: str, codigo: str, memoria: Memoria, espera: float | None, salida: Callable[[str], None]) -> str:
+    """Abre el canal de la placa, como el firmware al encender, y devuelve la clave con la que va a canjear.
+
+    Si la placa ya tiene dueno y una clave guardada, la usa. Si no, espera a que el dueno
+    la reclame con el QR: la clave llega por el canal y se guarda en la memoria.
+    """
+    url = api.rstrip("/").replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+    try:
+        canal = Client.connect(f"{url}/dispositivos/canal?codigo={codigo}")
+    except (ConexionRechazada, OSError) as error:
+        raise SinConexion(error) from error
+    limite = time.monotonic() + espera if espera is not None else None
+    try:
+        while True:
+            if limite is not None and time.monotonic() >= limite:
+                raise SinClave("Nadie reclamo la placa a tiempo.", 3)
+            texto = canal.receive(timeout=0.5)
+            if texto is None:
+                continue
+            mensaje = json.loads(texto)
+            tipo = mensaje.get("tipo")
+            if tipo == "vinculado":
+                memoria.guardar(mensaje["clave"])
+                salida(f"Vinculada a «{mensaje['planta']['apodo']}»: clave recibida por el canal y guardada.")
+                return mensaje["clave"]
+            if tipo == "estado" and mensaje.get("vinculado"):
+                guardada = memoria.leer()
+                if guardada:
+                    salida(f"Vinculada a «{mensaje['planta']['apodo']}», con su clave guardada.")
+                    return guardada
+                salida(f"Vinculada a «{mensaje['planta']['apodo']}», pero sin su clave: reclamela otra vez para esa matera.")
+            elif tipo == "estado":
+                memoria.borrar()
+                salida(f"Placa {codigo} sin dueno: reclamela desde el front con el QR de su etiqueta.")
+            elif tipo == "error":
+                raise SinClave(f"{mensaje['error']}: {mensaje['mensaje']}", 1)
+    except ConnectionClosed as error:
+        raise SinConexion("el servidor cerro el canal") from error
+    finally:
+        try:
+            canal.close()
+        except ConnectionClosed:
+            pass  # el servidor ya lo cerro
 
 
 class Simulador:
@@ -182,9 +265,9 @@ CASOS: tuple[Caso, ...] = (
     Caso("JSON mal formado", 400, "SOLICITUD_INVALIDA",
          lambda s, l: Envio(json.dumps(s.cuerpo(l)).encode()[:-5], s.token, s.codigo)),
     Caso("lectura de otro sensor", 403, "DISPOSITIVO_AJENO",
-         lambda s, l: Envio(s.cuerpo(l, dispositivo="MT-9999-ZZ"), s.token, s.codigo)),
+         lambda s, l: Envio(s.cuerpo(l, dispositivo="A4CF12009999"), s.token, s.codigo)),
     Caso("token en la URL de otro sensor", 403, "DISPOSITIVO_AJENO",
-         lambda s, l: Envio(s.cuerpo(l, dispositivo="MT-9999-ZZ"), s.token, "MT-9999-ZZ")),
+         lambda s, l: Envio(s.cuerpo(l, dispositivo="A4CF12009999"), s.token, "A4CF12009999")),
     Caso("sin token", 401, CREDENCIAL_INVALIDA,
          lambda s, l: Envio(s.cuerpo(l), None, s.codigo)),
     Caso("token alterado", 401, CREDENCIAL_INVALIDA,
@@ -308,8 +391,7 @@ def modo_casos(sim: Simulador, azar: random.Random) -> int:
 
 def _argumentos(argv: list[str] | None) -> argparse.Namespace:
     lector = argparse.ArgumentParser(description="Manda lecturas a la API como el ESP32, sin hardware.")
-    lector.add_argument("codigo", help="codigo del sensor de la matera, por ejemplo MT-0002-AB")
-    lector.add_argument("--clave", help="clave del sensor, como --clave=<clave> (si falta, se pide en la consola)")
+    lector.add_argument("codigo", help="codigo de la placa (su MAC), por ejemplo A4CF12000012")
     lector.add_argument("--api", default=os.environ.get("MATERA_API", API_POR_DEFECTO), help="URL base de la API")
     lector.add_argument("--intervalo", type=float, default=5.0, help="segundos entre lecturas (por defecto 5)")
     lector.add_argument("--veces", type=int, help="cuantas lecturas mandar (por defecto, hasta Ctrl+C)")
@@ -317,6 +399,8 @@ def _argumentos(argv: list[str] | None) -> argparse.Namespace:
     lector.add_argument("--invalidas", type=float, default=0.0, help="proporcion de datos invalidos, de 0 a 1")
     lector.add_argument("--casos", action="store_true", help="manda una vez cada caso de error y lo compara con lo esperado")
     lector.add_argument("--semilla", type=int, help="para repetir la misma secuencia de valores")
+    lector.add_argument("--espera", type=float, help="segundos maximos esperando dueno (por defecto, sin limite)")
+    lector.add_argument("--memoria", type=Path, default=MEMORIA_POR_DEFECTO, help="carpeta donde guarda la clave")
     args = lector.parse_args(argv)
     if not (0 <= args.fuera_de_rango <= 1 and 0 <= args.invalidas <= 1 and args.fuera_de_rango + args.invalidas <= 1):
         lector.error("--fuera-de-rango y --invalidas van de 0 a 1, y juntas no pueden pasar de 1")
@@ -325,12 +409,20 @@ def _argumentos(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None, salida: Callable[[str], None] = print) -> int:
     args = _argumentos(argv)
-    clave = args.clave or os.environ.get("MATERA_CLAVE_SENSOR") or getpass.getpass("Clave del sensor: ")
-    sim = Simulador(args.api, args.codigo, clave, salida)
+    codigo = args.codigo.strip().upper()
+    memoria = Memoria(args.memoria, codigo)
     azar = random.Random(args.semilla)
     try:
+        try:
+            clave = esperar_clave(args.api, codigo, memoria, args.espera, salida)
+        except SinClave as motivo:
+            salida(str(motivo))
+            return motivo.codigo
+        sim = Simulador(args.api, codigo, clave, salida)
         estado, respuesta = sim.canjear()
         if estado != 200:
+            if respuesta.get("error") == "CLAVE_SENSOR_INVALIDA":
+                memoria.borrar()  # la quitaron o la reclamaron otra vez: al volver a abrir el canal, recibe otra
             salida(f"No se pudo canjear la clave: {estado} {respuesta.get('error')}: {respuesta.get('mensaje')}")
             return 1
         salida(f"Token del sensor {sim.codigo} listo; vence {respuesta['venceEn']}.")

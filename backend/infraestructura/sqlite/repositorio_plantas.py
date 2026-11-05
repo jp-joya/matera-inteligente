@@ -1,4 +1,4 @@
-"""Plantas y sensores en SQLite.
+"""Plantas, sensores y las placas registradas en fabrica, en SQLite.
 
 Las consultas no deciden quien puede ver una planta: eso lo decide
 Planta.exigir_dueno, en el dominio. Las escrituras si exigen que la fila siga
@@ -15,12 +15,19 @@ from dataclasses import replace
 from dominio.errores import EspecieNoSoportada
 from dominio.errores_usuarios import ApodoRepetido, PlantaNoEncontrada, SensorYaVinculado, SesionInvalida
 from dominio.plantas import Planta
-from dominio.puertos_usuarios import ConsultaPlantas, CredencialesSensor, RegistroPlantas, SensoresVinculados
-from dominio.sensores import CodigoSensor, Sensor
+from dominio.errores_usuarios import DispositivoYaRegistrado
+from dominio.puertos_usuarios import (
+    ConsultaPlantas,
+    CredencialesSensor,
+    RegistroDispositivos,
+    RegistroPlantas,
+    SensoresVinculados,
+)
+from dominio.sensores import CodigoSensor, Dispositivo, Sensor
 from infraestructura.sqlite.base_datos import LA_MISMA_PLANTA, BaseDatos, cabe_en_sqlite
 
 _COLUMNAS_PLANTA = "p.id, p.usuario_id, p.apodo, p.especie"
-_INSERTAR_SENSOR = "INSERT INTO sensor (codigo, planta_id, hash_clave) VALUES (?, ?, ?)"
+_COLUMNAS_SENSOR = "codigo, planta_id, hash_clave, clave_confirmada"
 # La misma planta que se leyo: mismo id y mismo dueno.
 def _planta(fila: sqlite3.Row) -> Planta:
     return Planta(fila["id"], fila["usuario_id"], fila["apodo"], fila["especie"])
@@ -30,20 +37,16 @@ class RepositorioPlantasSqlite(ConsultaPlantas, RegistroPlantas):
     def __init__(self, bd: BaseDatos):
         self._bd = bd
 
-    def guardar_con_sensor(self, planta: Planta, codigo: CodigoSensor, hash_clave: str) -> Planta:
+    def guardar(self, planta: Planta) -> Planta:
         try:
-            # Una sola transaccion: si el sensor no se puede guardar, la planta tampoco queda.
             with self._bd.conexion() as conexion:
                 cursor = conexion.execute(
                     "INSERT INTO planta (usuario_id, especie, apodo) VALUES (?, ?, ?)",
                     (planta.usuario_id, planta.especie, planta.apodo),
                 )
-                conexion.execute(_INSERTAR_SENSOR, (codigo.valor, cursor.lastrowid, hash_clave))
         except sqlite3.IntegrityError as error:
-            # La base respalda las tres reglas que ya revisa RegistrarPlanta.
+            # La base respalda las reglas que ya revisa RegistrarPlanta.
             mensaje = str(error)
-            if "sensor.codigo" in mensaje:
-                raise SensorYaVinculado(codigo.valor) from None
             if "planta.usuario_id, planta.apodo" in mensaje:
                 raise ApodoRepetido(planta.apodo) from None
             if "FOREIGN KEY" in mensaje:
@@ -74,7 +77,7 @@ class RepositorioPlantasSqlite(ConsultaPlantas, RegistroPlantas):
         return _planta(fila) if fila else None
 
     def eliminar(self, planta: Planta) -> None:
-        # El sensor y el historial de la planta se borran en cascada.
+        # El historial y el vinculo con su sensor se borran en cascada: la placa queda libre.
         with self._bd.conexion() as conexion:
             conexion.execute("DELETE FROM planta WHERE id = ? AND usuario_id = ?", (planta.id, planta.usuario_id))
 
@@ -84,10 +87,10 @@ class RepositorioSensoresSqlite(SensoresVinculados, CredencialesSensor):
         self._bd = bd
 
     def por_codigo(self, codigo: CodigoSensor) -> Sensor | None:
-        return self._uno("SELECT codigo, planta_id, hash_clave FROM sensor WHERE codigo = ?", (codigo.valor,))
+        return self._uno(f"SELECT {_COLUMNAS_SENSOR} FROM sensor WHERE codigo = ?", (codigo.valor,))
 
     def de_planta(self, planta_id: int) -> Sensor | None:
-        return self._uno("SELECT codigo, planta_id, hash_clave FROM sensor WHERE planta_id = ?", (planta_id,))
+        return self._uno(f"SELECT {_COLUMNAS_SENSOR} FROM sensor WHERE planta_id = ?", (planta_id,))
 
     def reemplazar(self, planta: Planta, sensor: Sensor) -> None:
         # Una sola transaccion: si el codigo nuevo es de otra planta, esta conserva su sensor. Las dos
@@ -109,11 +112,28 @@ class RepositorioSensoresSqlite(SensoresVinculados, CredencialesSensor):
                 raise SensorYaVinculado(sensor.codigo.valor) from None
             raise
 
-    def renovar(self, sensor: Sensor, token_id: str) -> bool:
-        # Codigo, planta y huella: si entre tanto se cambio el sensor, la fila ya no coincide y no se toca.
+    def quitar(self, planta: Planta) -> None:
+        with self._bd.conexion() as conexion:
+            conexion.execute(
+                f"DELETE FROM sensor WHERE planta_id IN ({LA_MISMA_PLANTA})", (planta.id, planta.usuario_id)
+            )
+
+    def nueva_clave(self, sensor: Sensor, hash_clave: str) -> bool:
+        # Codigo, planta y huella: si entre tanto se quito o se reclamo otra vez, la fila ya no coincide.
         with self._bd.conexion() as conexion:
             actualizado = conexion.execute(
-                "UPDATE sensor SET token_id = ? WHERE codigo = ? AND planta_id = ? AND hash_clave = ?",
+                "UPDATE sensor SET hash_clave = ?, clave_confirmada = 0, token_id = NULL"
+                " WHERE codigo = ? AND planta_id = ? AND hash_clave = ?",
+                (hash_clave, sensor.codigo.valor, sensor.planta_id, sensor.hash_clave),
+            )
+        return actualizado.rowcount == 1
+
+    def renovar(self, sensor: Sensor, token_id: str) -> bool:
+        # Codigo, planta y huella: si entre tanto se cambio el sensor, la fila ya no coincide y no se toca.
+        # El canje tambien confirma la clave: la placa la guardo.
+        with self._bd.conexion() as conexion:
+            actualizado = conexion.execute(
+                "UPDATE sensor SET token_id = ?, clave_confirmada = 1 WHERE codigo = ? AND planta_id = ? AND hash_clave = ?",
                 (token_id, sensor.codigo.valor, sensor.planta_id, sensor.hash_clave),
             )
         return actualizado.rowcount == 1
@@ -132,4 +152,32 @@ class RepositorioSensoresSqlite(SensoresVinculados, CredencialesSensor):
             fila = conexion.execute(consulta, parametros).fetchone()
         if fila is None:
             return None
-        return Sensor(CodigoSensor(fila["codigo"]), fila["planta_id"], fila["hash_clave"])
+        return Sensor(
+            CodigoSensor(fila["codigo"]), fila["planta_id"], fila["hash_clave"], bool(fila["clave_confirmada"])
+        )
+
+
+class RepositorioDispositivosSqlite(RegistroDispositivos):
+    """Las placas registradas en fabrica. Una placa existe aqui tenga o no dueno."""
+
+    def __init__(self, bd: BaseDatos):
+        self._bd = bd
+
+    def registrar(self, dispositivo: Dispositivo) -> None:
+        try:
+            with self._bd.conexion() as conexion:
+                conexion.execute(
+                    "INSERT INTO dispositivo (codigo, hash_reclamo) VALUES (?, ?)",
+                    (dispositivo.codigo.valor, dispositivo.hash_reclamo),
+                )
+        except sqlite3.IntegrityError as error:
+            if "dispositivo.codigo" in str(error):
+                raise DispositivoYaRegistrado(dispositivo.codigo.valor) from None
+            raise
+
+    def por_codigo(self, codigo: CodigoSensor) -> Dispositivo | None:
+        with self._bd.conexion() as conexion:
+            fila = conexion.execute(
+                "SELECT codigo, hash_reclamo FROM dispositivo WHERE codigo = ?", (codigo.valor,)
+            ).fetchone()
+        return Dispositivo(CodigoSensor(fila["codigo"]), fila["hash_reclamo"]) if fila else None

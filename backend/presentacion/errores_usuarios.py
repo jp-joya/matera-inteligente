@@ -29,15 +29,20 @@ _TABLA: dict[type[ErrorDominio], tuple[int, str]] = {
     e.AlcanceInvalido: (403, "ALCANCE_INVALIDO"),
     e.PermisoDenegado: (403, "PERMISO_DENEGADO"),
     e.DispositivoAjeno: (403, "DISPOSITIVO_AJENO"),
+    # El mismo si la placa no existe: no se confirma cuales MAC estan registradas.
+    e.CodigoReclamoInvalido: (403, "CODIGO_RECLAMO_INVALIDO"),
     # Una planta ajena tambien da 404: un 403 confirmaria que existe.
     e.PlantaNoEncontrada: (404, "PLANTA_NO_ENCONTRADA"),
     e.UsuarioNoEncontrado: (404, "USUARIO_NO_ENCONTRADO"),
+    e.PlantaSinSensor: (404, "PLANTA_SIN_SENSOR"),
+    e.DispositivoNoRegistrado: (404, "DISPOSITIVO_NO_REGISTRADO"),
     e.CorreoYaRegistrado: (409, "CORREO_YA_REGISTRADO"),
     e.AccionSobreSiMismo: (409, "ACCION_SOBRE_SI_MISMO"),
     e.EspecieYaExiste: (409, "ESPECIE_YA_EXISTE"),
     e.TablaDeSoloLectura: (409, "TABLA_SOLO_LECTURA"),
     e.ApodoRepetido: (409, "APODO_REPETIDO"),
     e.SensorYaVinculado: (409, "SENSOR_YA_VINCULADO"),
+    e.DispositivoYaRegistrado: (409, "DISPOSITIVO_YA_REGISTRADO"),
 }
 
 # Para los 400, el campo del formulario que hay que corregir.

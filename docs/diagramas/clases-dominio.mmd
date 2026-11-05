@@ -152,12 +152,17 @@ classDiagram
         +mismo_apodo(apodo: str) bool
     }
     class CodigoSensor {
-        +valor: str
+        +valor: str «la MAC de la placa»
+    }
+    class Dispositivo {
+        +codigo: CodigoSensor
+        +hash_reclamo: str
     }
     class Sensor {
         +codigo: CodigoSensor
         +planta_id: int
         +hash_clave: str
+        +clave_confirmada: bool
     }
     class RegistroMedicion {
         +planta_id: int
@@ -203,10 +208,18 @@ classDiagram
         +usuario: Usuario
         +cantidad_plantas: int
     }
-    class SensorVinculado {
+    class DispositivoRegistrado {
+        +codigo: CodigoSensor
+        +codigo_reclamo: str
+    }
+    class ResultadoReclamo {
         +planta: Planta
         +codigo: CodigoSensor
-        +clave: str
+        +clave_entregada: bool
+    }
+    class EstadoDispositivo {
+        +planta: Planta o None
+        +clave: str o None
     }
     class PlantaConEstado {
         +planta: Planta
@@ -234,8 +247,10 @@ classDiagram
     Usuario "1" --> "0..*" Sesion : abre
     Usuario "1" --> "0..*" Planta : es dueño de
     Planta ..> Especie : especie
-    Planta "1" --> "0..1" Sensor : nace con
+    Planta "1" --> "0..1" Sensor : tiene, si reclamaron una placa
     Sensor *-- CodigoSensor : codigo
+    Dispositivo *-- CodigoSensor : codigo
+    Sensor ..> Dispositivo : una placa registrada en fábrica
     Planta "1" --> "0..*" RegistroMedicion : acumula
     RegistroMedicion "1" *-- "1..*" LecturaRegistrada
     RegistroMedicion --> EstadoGlobal : estado
@@ -248,8 +263,8 @@ classDiagram
     SolicitudDiagnostico --> Medicion : medicion
     SesionIniciada --> Usuario : usuario
     CuentaUsuario --> Usuario : usuario
-    SensorVinculado --> Planta : planta
-    SensorVinculado --> CodigoSensor : codigo
+    ResultadoReclamo --> Planta : planta
+    EstadoDispositivo --> Planta : planta
     PlantaConEstado --> Planta : planta
     PlantaConEstado --> "0..1" Sensor : sensor
     PlantaConEstado --> "0..1" RegistroMedicion : ultima_medicion
@@ -260,10 +275,10 @@ classDiagram
     ResultadoMedicion --> RegistroMedicion : registro
 
     note for IdentidadUsuario "token_id es el jti del JWT. Mientras exista una Sesion<br>con ese token_id el token sirve: cerrar la sesión o<br>desactivar la cuenta lo invalida aunque no haya vencido."
-    note for IdentidadDispositivo "token_id es el del último canje de la clave: un canje<br>nuevo, o cambiar el sensor de la planta, invalida los anteriores."
+    note for IdentidadDispositivo "token_id es el del último canje de la clave: un canje<br>nuevo, quitar el sensor o reclamar la placa otra vez invalida los anteriores."
     note for ReporteDeDispositivo "Al construirse exige una hora con zona horaria; después,<br>exigir_que_no_sea_futuro tolera ADELANTO_MAXIMO = 2 minutos<br>de adelanto. Las dos reglas lanzan MomentoInvalido."
 
-    note "Errores del corte 2 (errores_usuarios.py), heredan de ErrorDominio:<br>CorreoInvalido, NombreInvalido, ContrasenaDebil, CorreoYaRegistrado,<br>CredencialesInvalidas, CuentaDesactivada, SesionInvalida,<br>PermisoDenegado, AccionSobreSiMismo, UsuarioNoEncontrado,<br>EspecieYaExiste, PlantaNoEncontrada, ApodoInvalido, ApodoRepetido,<br>CodigoSensorInvalido, SensorYaVinculado, ClaveSensorInvalida<br>Errores de la fase 2, en el mismo archivo:<br>TablaDeSoloLectura, AlcanceInvalido, CredencialDispositivoInvalida,<br>DispositivoAjeno, MomentoInvalido"
+    note "Errores del corte 2 (errores_usuarios.py), heredan de ErrorDominio:<br>CorreoInvalido, NombreInvalido, ContrasenaDebil, CorreoYaRegistrado,<br>CredencialesInvalidas, CuentaDesactivada, SesionInvalida,<br>PermisoDenegado, AccionSobreSiMismo, UsuarioNoEncontrado,<br>EspecieYaExiste, PlantaNoEncontrada, ApodoInvalido, ApodoRepetido,<br>CodigoSensorInvalido, SensorYaVinculado, ClaveSensorInvalida<br>Errores de la fase 2, en el mismo archivo:<br>TablaDeSoloLectura, AlcanceInvalido, CredencialDispositivoInvalida,<br>DispositivoAjeno, MomentoInvalido<br>Vinculacion con QR: DispositivoYaRegistrado, DispositivoNoRegistrado,<br>CodigoReclamoInvalido, PlantaSinSensor"
 
     style Parametro fill:#D5E8D4,stroke:#5a7d5f,color:#16231b
     style Lectura fill:#D5E8D4,stroke:#5a7d5f,color:#16231b
@@ -297,7 +312,10 @@ classDiagram
     style SolicitudDiagnostico fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style SesionIniciada fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style CuentaUsuario fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
-    style SensorVinculado fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
+    style Dispositivo fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
+    style DispositivoRegistrado fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
+    style ResultadoReclamo fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
+    style EstadoDispositivo fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style PlantaConEstado fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style HistorialPlanta fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b
     style TokenDispositivo fill:#D5E8D4,stroke:#2e6a4e,stroke-width:2px,color:#16231b

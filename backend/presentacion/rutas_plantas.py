@@ -1,4 +1,4 @@
-"""Rutas de las plantas del usuario: Mis materas, el sensor de cada una y su historial.
+"""Rutas de las plantas del usuario: Mis materas, quitar el sensor de una y su historial.
 
 Todas exigen sesion: el decorador con_usuario verifica el token y le entrega
 el usuario a la ruta. El usuario sale del token, nunca del cuerpo ni de la URL:
@@ -16,7 +16,7 @@ def crear_blueprint_plantas(
     registrar: entrada.RegistrarPlanta,
     listar: entrada.ListarPlantas,
     eliminar: entrada.EliminarPlanta,
-    reemplazar_sensor: entrada.ReemplazarSensor,
+    quitar_sensor: entrada.QuitarSensor,
     consultar_historial: entrada.ConsultarHistorial,
     autenticacion: Autenticacion,
 ) -> Blueprint:
@@ -31,22 +31,20 @@ def crear_blueprint_plantas(
     @bp.post("")
     @autenticacion.con_usuario
     def registrar_planta(usuario):
-        apodo, especie, codigo = esquemas_usuarios.planta_desde_json(request.get_json(silent=True))
-        vinculado = registrar.ejecutar(usuario, apodo, especie, codigo)
-        return jsonify(esquemas_usuarios.sensor_vinculado_a_json(vinculado)), 201
+        apodo, especie = esquemas_usuarios.planta_desde_json(request.get_json(silent=True))
+        return jsonify(esquemas_usuarios.planta_a_json(registrar.ejecutar(usuario, apodo, especie))), 201
 
     @bp.delete("/<int:planta_id>")
     @autenticacion.con_usuario
     def eliminar_planta(usuario, planta_id: int):
         eliminar.ejecutar(usuario, planta_id)
-        return jsonify({"mensaje": "Planta eliminada, con su sensor y su historial."})
+        return jsonify({"mensaje": "Planta eliminada con su historial. Su sensor quedó libre para otra matera."})
 
-    @bp.put("/<int:planta_id>/sensor")
+    @bp.delete("/<int:planta_id>/sensor")
     @autenticacion.con_usuario
-    def cambiar_sensor(usuario, planta_id: int):
-        codigo = esquemas_usuarios.codigo_desde_json(request.get_json(silent=True))
-        vinculado = reemplazar_sensor.ejecutar(usuario, planta_id, codigo)
-        return jsonify(esquemas_usuarios.sensor_vinculado_a_json(vinculado))
+    def quitar(usuario, planta_id: int):
+        codigo = quitar_sensor.ejecutar(usuario, planta_id)
+        return jsonify({"mensaje": f"Sensor {codigo.valor} quitado: su clave y su token ya no sirven."})
 
     @bp.get("/<int:planta_id>/historial")
     @autenticacion.con_usuario
